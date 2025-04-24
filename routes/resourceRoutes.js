@@ -8,7 +8,7 @@ const {
   searchResources,
   getResourcesByCategory,
   downloadResource
-} = require('../controllers/ResourceController');
+} = require('../controllers/resourceController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/upload');
 

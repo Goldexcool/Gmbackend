@@ -7,7 +7,7 @@ const {
     getAllStudyGroups,
     updateStudyGroup,
     sendGroupMessage
-} = require('../Controllers/StudyGroupController');
+} = require('../Controllers/studyGroupController');
 const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();

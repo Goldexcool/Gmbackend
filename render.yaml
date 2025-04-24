@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: gemspace-backend
+    env: node
+    plan: free
+    buildCommand: |
+      # Create full directory structure with all case variations
+      mkdir -p config Config controllers Controllers middleware Middleware models Models
+      
+      # Create symlinks for all directories
+      find . -type d -name "[A-Z]*" | while read dir; do
+        basename=$(basename "$dir")
+        lowercase=$(echo "$basename" | tr '[:upper:]' '[:lower:]')
+        if [ "$basename" != "$lowercase" ]; then
+          ln -sf "$dir"/* "$lowercase"/ 2>/dev/null || true
+        fi
+      done
+      
+      # Create symlinks for controller files with various casings
+      find ./Controllers -type f -name "*.js" 2>/dev/null | while read file; do
+        basename=$(basename "$file")
+        lowercase=$(echo "$basename" | tr '[:upper:]' '[:lower:]')
+        if [ "$basename" != "$lowercase" ]; then
+          ln -sf "$file" "./controllers/$lowercase" 2>/dev/null || true
+        fi
+      done
+      
+      # Also symlink files with matching case
+      find ./Controllers -type f -name "*.js" 2>/dev/null | while read file; do
+        basename=$(basename "$file")
+        ln -sf "$file" "./controllers/$basename" 2>/dev/null || true
+      done
+      
+      # Same for middleware files
+      find ./Middleware -type f -name "*.js" 2>/dev/null | while read file; do
+        basename=$(basename "$file")
+        lowercase=$(echo "$basename" | tr '[:upper:]' '[:lower:]')
+        ln -sf "$file" "./middleware/$lowercase" 2>/dev/null || true
+        ln -sf "$file" "./middleware/$basename" 2>/dev/null || true
+      done
+      
+      npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production

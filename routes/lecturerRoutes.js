@@ -6,7 +6,7 @@ const {
     getStudents,
     assignCourseRep,
     getLecturerProfile
-} = require('../controllers/LecturerController');
+} = require('../controllers/lecturerController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const ROLES = { LECTURER: 'lecturer', STUDENT: 'student', ADMIN: 'admin' };
 

@@ -13,6 +13,7 @@ const {
 } = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const router = express.Router();
+const authController = require('../controllers/authController');
 
 // Public routes
 router.post('/register', register);
@@ -27,5 +28,8 @@ router.get('/me', protect, getCurrentUser);
 router.put('/update-profile', protect, updateProfile);
 router.put('/change-password', protect, changePassword);
 router.post('/logout', protect, logout);
+
+// Check if this route exists
+router.post('/register', authController.register);
 
 module.exports = router;

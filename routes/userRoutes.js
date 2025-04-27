@@ -3,7 +3,8 @@ const {
     registerUser,
     loginUser,
     getUserProfile,
-    updateUserProfile
+    updateUserProfile,
+    forgotPassword
 } = require('../controllers/userController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -12,6 +13,7 @@ const router = express.Router();
 // Public routes
 router.post('/register', registerUser);
 router.post('/login', loginUser);
+router.post('/forgot-password', forgotPassword);
 
 // Protected routes
 router.get('/profile', protect, getUserProfile);

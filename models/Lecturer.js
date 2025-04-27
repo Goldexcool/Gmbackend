@@ -8,24 +8,31 @@ const LecturerSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
+  lecturerId: {
+    type: String,
+    unique: true,
+    default: function() {
+      return 'LECT-' + Date.now().toString().slice(-6) + '-' + 
+        Math.random().toString(36).substring(2, 6).toUpperCase();
+    }
+  },
   staffId: {
     type: String,
     unique: true,
-    sparse: true
+    sparse: true,
   },
   department: String,
   college: String,
+  specialization: String, 
   specialty: String,
   courses: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Course'
   }],
-  officeHours: [{
-    day: String,
-    startTime: String,
-    endTime: String,
-    location: String
-  }],
+  officeHours: {
+    type: mongoose.Schema.Types.Mixed, // Can be string or array
+    default: []
+  },
   currentlyTeaching: {
     type: Boolean,
     default: true

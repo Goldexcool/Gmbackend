@@ -4,8 +4,10 @@ const mongoose = require('mongoose');
 const CourseSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: [true, 'Please add a course name'],
-    trim: true
+    required: [true, 'Please add a course name']
+  },
+  title: {
+    type: String
   },
   code: {
     type: String,
@@ -13,26 +15,76 @@ const CourseSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
-  lecturers: [{
+  description: {
+    type: String,
+    trim: true
+  },
+  department: {
+    type: String,
+    required: [true, 'Please specify a department']
+  },
+  college: {
+    type: String
+  },
+  level: {
+    type: Number,
+    default: 100
+  },
+  semester: {
+    type: Number,
+    default: 1,
+    enum: [1, 2, 3] // Some schools have 3 semesters
+  },
+  credits: {
+    type: Number,
+    default: 3
+  },
+  capacity: {
+    type: Number,
+    default: 50
+  },
+  enrolledStudents: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Lecturer'
+    ref: 'User'
   }],
-  students: [{
+  assignedLecturers: [{ // This field is missing in your schema
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Student'
+    ref: 'User'
   }],
-  schedule: [{
+  prerequisites: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Schedule'
+    ref: 'Course'
   }],
-  resources: [{
+  syllabus: String,
+  schedule: {
+    days: [String],
+    startTime: String,
+    endTime: String,
+    venue: String
+  },
+  materials: [{
+    title: String,
+    type: String,
+    url: String,
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    uploadedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Resource'
-  }],
-  createdAt: {
-    type: Date,
-    default: Date.now
+    ref: 'User'
   }
+}, {
+  timestamps: true
 });
 
 module.exports = mongoose.model('Course', CourseSchema);

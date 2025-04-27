@@ -8,11 +8,14 @@ const StudentSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
-  // Change from regNumber to matricNumber to match your database
   matricNumber: {
     type: String,
-    // Remove unique constraint or make it sparse to allow multiple null values
-    sparse: true  // This allows multiple documents with null/undefined values
+    unique: true,
+    sparse: true
+  },
+  program: {
+    type: String,
+    default: 'Undeclared'  // Provide a default value
   },
   department: String,
   faculty: String,

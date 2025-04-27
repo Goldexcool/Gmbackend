@@ -6,6 +6,19 @@ const cors = require('cors');
 const http = require('http');
 const socketIo = require('socket.io');
 
+// Import models - make sure these are defined before using them
+const User = require('./models/User');
+const Course = require('./models/Course');
+const Student = require('./models/Student');
+const Lecturer = require('./models/Lecturer');
+const Schedule = require('./models/Schedule');
+
+// For new models, make sure to import them directly
+const Announcement = require('./models/Announcement');
+const FAQ = require('./models/FAQ');  
+const Settings = require('./models/Settings');
+const AcademicSession = require('./models/AcademicSession');
+
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const studentRoutes = require('./routes/studentRoutes');
@@ -14,6 +27,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const resourceRoutes = require('./routes/resourceRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const courseRoutes = require('./routes/courseRoutes');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -47,6 +61,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/courses', courseRoutes);
 
 // Root route
 app.get('/', (req, res) => {

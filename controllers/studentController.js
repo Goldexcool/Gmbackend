@@ -5,6 +5,7 @@ const Task = require('../models/Task');
 const Schedule = require('../models/Schedule');
 const StudyGroup = require('../models/StudyGroup');
 const Chat = require('../models/Chat');
+const Course = require('../models/Course');
 
 // @desc    Get student dashboard data
 // @route   GET /api/students/:id/dashboard
@@ -347,6 +348,75 @@ exports.getStudentProfile = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error'
+    });
+  }
+};
+
+// @desc    Get all departments for students
+// @route   GET /api/users/departments
+// @access  Private (Student only)
+exports.getDepartments = async (req, res) => {
+  try {
+    // Get unique departments from courses with active status
+    const departments = await Course.aggregate([
+      { $match: { isActive: true } },
+      { $group: { _id: '$department', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+      { $match: { _id: { $ne: null } } }
+    ]);
+    
+    res.status(200).json({
+      success: true,
+      count: departments.length,
+      data: departments.map(dept => ({ 
+        name: dept._id,
+        courseCount: dept.count
+      }))
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get department details for students
+// @route   GET /api/users/departments/:departmentName
+// @access  Private (Student only)
+exports.getDepartmentDetails = async (req, res) => {
+  try {
+    const { departmentName } = req.params;
+    
+    // Get active courses for the department
+    const courses = await Course.find({ 
+      department: departmentName,
+      isActive: true
+    }).select('name code credits description semester level');
+    
+    if (courses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Department '${departmentName}' not found or has no active courses`
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        name: departmentName,
+        courses,
+        courseCount: courses.length
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 };

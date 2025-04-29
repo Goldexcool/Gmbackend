@@ -6,6 +6,7 @@ const User = require('../models/User');
 const Schedule = require('../models/Schedule');
 const Task = require('../models/Task');
 const Chat = require('../models/Chat');
+const FAQ = require('../models/FAQ');
 const { bucket } = require('../config/firebase');
 
 
@@ -431,6 +432,128 @@ exports.chatWithStudent = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error'
+    });
+  }
+};
+
+// @desc    Get all FAQs for lecturers
+// @route   GET /api/lecturers/faqs
+// @access  Private (Lecturer only)
+exports.getAllFAQs = async (req, res) => {
+  try {
+    // Import FAQ model if not already imported
+    const FAQ = require('../models/FAQ');
+    
+    // Only get active FAQs
+    const faqs = await FAQ.find({ isActive: true })
+      .sort({ category: 1, order: 1 });
+    
+    res.status(200).json({
+      success: true,
+      count: faqs.length,
+      data: faqs
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get all departments for lecturers
+// @route   GET /api/lecturers/departments
+// @access  Private (Lecturer only)
+exports.getDepartments = async (req, res) => {
+  try {
+    // Get unique departments from courses
+    const departments = await Course.aggregate([
+      { $match: { isActive: true } },
+      { $group: { _id: '$department', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+      { $match: { _id: { $ne: null } } }
+    ]);
+    
+    res.status(200).json({
+      success: true,
+      count: departments.length,
+      data: departments.map(dept => ({ 
+        name: dept._id,
+        courseCount: dept.count
+      }))
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get department details for lecturers
+// @route   GET /api/lecturers/departments/:departmentName
+// @access  Private (Lecturer only)
+exports.getDepartmentDetails = async (req, res) => {
+  try {
+    const { departmentName } = req.params;
+    
+    // Get lecturer's ID
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    
+    // Get courses for the department
+    const courses = await Course.find({ 
+      department: departmentName 
+    }).select('name code credits description semester level');
+    
+    if (courses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Department '${departmentName}' not found or has no courses`
+      });
+    }
+    
+    // Get lecturers for the department
+    const lecturers = await Lecturer.find({ 
+      department: departmentName 
+    }).populate('user', 'fullName email');
+    
+    // Mark courses taught by the requesting lecturer
+    const coursesWithAssignment = courses.map(course => {
+      const courseObj = course.toObject();
+      if (lecturer && lecturer.courses && lecturer.courses.includes(course._id)) {
+        courseObj.isTeaching = true;
+      } else {
+        courseObj.isTeaching = false;
+      }
+      return courseObj;
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        name: departmentName,
+        courses: coursesWithAssignment,
+        lecturers: lecturers.map(l => ({
+          id: l._id,
+          name: l.user.fullName,
+          email: l.user.email
+        })),
+        stats: {
+          courseCount: courses.length,
+          lecturerCount: lecturers.length
+        }
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 };

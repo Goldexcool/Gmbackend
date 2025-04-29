@@ -23,9 +23,11 @@ router.delete('/courses/:courseId/lecturers/:lecturerId', adminController.remove
 router.put('/courses/:courseId/lecturers', adminController.updateCourseLecturers);
 
 // Department setup
-router.post('/department-setup', adminController.setupDepartment);
+// router.post('/department-setup', adminController.setupDepartment);
 
 // Department Management
+router.get('/departments', adminController.getDepartments);
+router.get('/departments/:departmentName', adminController.getDepartmentDetails);
 router.put('/departments/:departmentName', adminController.updateDepartment);
 router.delete('/departments/:departmentName', adminController.deleteDepartment);
 
@@ -54,9 +56,10 @@ router.delete('/schedules/course/:courseId', adminController.deleteCoursesSchedu
 
 // FAQ Management
 router.get('/faqs', adminController.getAllFAQs);
+router.get('/faqs/:faqId', adminController.getFAQById);
 router.post('/faqs', adminController.createFAQ);
-router.put('/faqs/:id', adminController.updateFAQ);
-router.delete('/faqs/:id', adminController.deleteFAQ);
+router.put('/faqs/:faqId', adminController.updateFAQ);
+router.delete('/faqs/:faqId', adminController.deleteFAQ);
 
 // Enrollment Management
 router.get('/enrollments', adminController.getEnrollments);

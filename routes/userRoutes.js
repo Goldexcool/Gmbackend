@@ -1,22 +1,14 @@
 const express = require('express');
-const { 
-    registerUser,
-    loginUser,
-    getUserProfile,
-    updateUserProfile,
-    forgotPassword
-} = require('../controllers/userController');
-const { protect } = require('../middleware/authMiddleware');
-
 const router = express.Router();
+const userController = require('../controllers/userController');
+const { protect, authorize } = require('../middleware/auth');
 
-// Public routes
-router.post('/register', registerUser);
-router.post('/login', loginUser);
-router.post('/forgot-password', forgotPassword);
+// Apply middleware to all routes
+router.use(protect);
 
-// Protected routes
-router.get('/profile', protect, getUserProfile);
-router.put('/profile', protect, updateUserProfile);
+// Routes accessible by students
+router.get('/departments', userController.getDepartments);
+router.get('/departments/:departmentName', userController.getDepartmentDetails);
+router.get('/faqs', userController.getAllFAQs);
 
 module.exports = router;

@@ -4,7 +4,9 @@ const {
     getSchedule, 
     createTask, 
     updateTask, 
-    getStudentProfile 
+    getStudentProfile,
+    getDepartments,
+    getDepartmentDetails
 } = require('../controllers/studentController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { ROLES } = require('../config/constants');
@@ -29,5 +31,9 @@ router.put('/:id/tasks/:taskId', updateTask);
 
 // Get student profile
 router.get('/:id', getStudentProfile);
+
+// Department routes
+router.get('/departments', getDepartments);
+router.get('/departments/:departmentName', getDepartmentDetails);
 
 module.exports = router;

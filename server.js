@@ -28,6 +28,8 @@ const resourceRoutes = require('./routes/resourceRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const courseRoutes = require('./routes/courseRoutes');
+const userRoutes = require('./routes/userRoutes');
+const conversationRoutes = require('./routes/conversationRoutes');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -62,6 +64,8 @@ app.use('/api/resources', resourceRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/courses', courseRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/conversations', conversationRoutes);
 
 // Root route
 app.get('/', (req, res) => {
@@ -88,6 +92,15 @@ io.on('connection', (socket) => {
   
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
+  });
+});
+
+// Handle 404 - Route not found
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `Cannot ${req.method} ${req.originalUrl}`,
+    suggestion: 'Please check the API documentation for available endpoints'
   });
 });
 

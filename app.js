@@ -6,7 +6,9 @@ const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const postRoutes = require('./routes/postRoutes');
 const aiRoutes = require('./routes/aiRoutes');
-const errorHandler = require('./Middleware/errorHandler');
+const adminRoutes = require('./routes/adminRoutes');
+const lecturerRoutes = require('./routes/lecturerRoutes');
+const errorHandler = require('./middleware/errorHandler');
 require('dotenv').config();
 
 const app = express();
@@ -21,6 +23,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/lecturers', lecturerRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

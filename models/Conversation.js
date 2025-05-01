@@ -32,16 +32,19 @@ const ConversationSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Remove any existing indexes on the connection field
-// Note: This must come BEFORE creating the new index
-ConversationSchema.indexes().forEach(index => {
-  if (index[0].connection && Object.keys(index[0]).length === 1) {
-    mongoose.model('Conversation')?.collection?.dropIndex(index[1])
-      .catch(err => console.log('Note: Index may not exist yet, this is normal on first run'));
+// Drop the existing compound index
+mongoose.connection.once('open', async () => {
+  try {
+    await mongoose.connection.db.collection('conversations').dropIndex('user_1_connection_1');
+    console.log('Dropped compound index');
+  } catch (error) {
+    // Index might not exist yet, which is fine
+    console.log('Note: compound index may not exist yet');
   }
 });
 
-// Now create the compound index
-ConversationSchema.index({ user: 1, connection: 1 }, { unique: true, sparse: true });
+// Create a single-field sparse unique index on connection
+// This only enforces uniqueness for non-null values
+ConversationSchema.index({ connection: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Conversation', ConversationSchema);

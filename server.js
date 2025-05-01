@@ -61,16 +61,19 @@ const fixMongoIndexes = async () => {
     // Get the Conversation model
     const Conversation = mongoose.model('Conversation');
     
-    // Check for the problematic index
-    const indexes = await Conversation.collection.indexes();
-    const connectionIndex = indexes.find(idx => 
-      idx.name === 'connection_1' && !idx.sparse
-    );
-    
-    if (connectionIndex) {
-      console.log('Found problematic index, dropping it...');
+    // Drop both problematic indexes
+    try {
       await Conversation.collection.dropIndex('connection_1');
-      console.log('Index dropped successfully');
+      console.log('Dropped connection_1 index');
+    } catch (error) {
+      console.log('Note: connection_1 index might not exist');
+    }
+    
+    try {
+      await Conversation.collection.dropIndex('user_1_connection_1');
+      console.log('Dropped user_1_connection_1 index');
+    } catch (error) {
+      console.log('Note: user_1_connection_1 index might not exist');
     }
   } catch (error) {
     console.error('Error fixing indexes:', error);

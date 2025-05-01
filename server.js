@@ -55,6 +55,34 @@ mongoose.connect(process.env.MONGO_URI, {
   process.exit(1);
 });
 
+// Function to check and fix MongoDB indexes
+const fixMongoIndexes = async () => {
+  try {
+    // Get the Conversation model
+    const Conversation = mongoose.model('Conversation');
+    
+    // Check for the problematic index
+    const indexes = await Conversation.collection.indexes();
+    const connectionIndex = indexes.find(idx => 
+      idx.name === 'connection_1' && !idx.sparse
+    );
+    
+    if (connectionIndex) {
+      console.log('Found problematic index, dropping it...');
+      await Conversation.collection.dropIndex('connection_1');
+      console.log('Index dropped successfully');
+    }
+  } catch (error) {
+    console.error('Error fixing indexes:', error);
+  }
+};
+
+// Call this after connection is established
+mongoose.connection.once('open', () => {
+  console.log('MongoDB connected');
+  fixMongoIndexes();
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());

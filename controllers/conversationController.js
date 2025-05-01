@@ -6,6 +6,14 @@ const { textModel, complexModel } = require('../utils/aiModels');
 // @access  Private
 exports.createConversation = async (req, res) => {
   try {
+    // Check if req.user exists
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
     const { title, initialMessage, useComplexModel } = req.body;
     
     if (!initialMessage) {
@@ -15,19 +23,23 @@ exports.createConversation = async (req, res) => {
       });
     }
     
+    // Select model based on request
+    const model = useComplexModel ? complexModel : textModel;
+    const modelName = useComplexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+
     // Create new conversation
     const conversation = new Conversation({
       title: title || 'New Conversation',
       user: req.user.id,
-      messages: [
-        { role: 'user', content: initialMessage }
-      ]
+      messages: [],  // Ensure this is always initialized as an array
+      model: modelName
     });
-    
-    // Select model based on request
-    const model = useComplexModel ? complexModel : textModel;
-    const modelName = useComplexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
-    conversation.model = modelName;
+
+    // Ensure messages exists before pushing
+    if (!conversation.messages) {
+      conversation.messages = [];
+    }
+    conversation.messages.push({ role: 'user', content: initialMessage });
     
     try {
       // Get AI response
@@ -196,7 +208,13 @@ exports.continueConversation = async (req, res) => {
       });
     }
     
-    // Add user message
+    // Add a debug check for messages
+    if (!conversation.messages) {
+      console.error('Messages array is undefined for conversation:', conversation._id);
+      conversation.messages = []; // Initialize if missing
+    }
+    
+    // Now push is safe
     conversation.messages.push({
       role: 'user',
       content: message

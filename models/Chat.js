@@ -1,33 +1,86 @@
 // models/Chat.js
 const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
 
-const ChatSchema = new mongoose.Schema({
-  name: {
+const messageSchema = new Schema({
+  sender: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  content: {
     type: String,
+    required: true,
     trim: true
   },
-  description: {
-    type: String,
-    trim: true
+  timestamp: {
+    type: Date,
+    default: Date.now
+  },
+  readBy: [{
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    readAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  attachments: [{
+    filename: String,
+    fileUrl: String,
+    mimeType: String,
+    size: Number
+  }]
+});
+
+const chatSchema = new Schema({
+  participants: [{
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  }],
+  messages: [messageSchema],
+  lastMessage: {
+    content: String,
+    sender: {
+      type: Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
   },
   isGroupChat: {
     type: Boolean,
     default: false
   },
-  participants: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
+  groupName: {
+    type: String,
+    trim: true
+  },
   groupAdmin: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: Schema.Types.ObjectId,
     ref: 'User'
   },
-  latestMessage: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Message'
+  courseContext: {
+    type: Schema.Types.ObjectId,
+    ref: 'Course'
+  },
+  isActive: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true
 });
 
-module.exports = mongoose.model('Chat', ChatSchema);
+// Indexes for faster queries
+chatSchema.index({ participants: 1 });
+chatSchema.index({ 'lastMessage.timestamp': -1 });
+chatSchema.index({ courseContext: 1 });
+
+const Chat = mongoose.model('Chat', chatSchema);
+module.exports = Chat;

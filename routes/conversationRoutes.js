@@ -9,11 +9,46 @@ router.use(protect);
 // Debug check
 console.log('Controller functions:', Object.keys(conversationController));
 
+// Log requests for debugging
+router.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  console.log('Request body:', req.body);
+  next();
+});
+
 // CRUD operations
 router.get('/', conversationController.getUserConversations);
-router.post('/', conversationController.createConversation);
+router.post('/', (req, res, next) => {
+  // Check for initialMessage and provide clear error if missing
+  if (!req.body.initialMessage) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide an initial message for the conversation',
+      example: {
+        initialMessage: "Your conversation starter message here",
+        title: "Optional title for the conversation"
+      }
+    });
+  }
+  conversationController.createConversation(req, res, next);
+});
+
 router.get('/:id', conversationController.getConversation);
-router.delete('/:id', conversationController.deleteConversation);
+
+// Main conversation update endpoint
+router.put('/:id', (req, res) => {
+  console.log('PUT to /:id with body:', req.body);
+  
+  if (req.body.title && conversationController.updateConversationTitle) {
+    conversationController.updateConversationTitle(req, res);
+  } else {
+    res.status(400).json({
+      success: false,
+      message: 'Please provide a title to update',
+      example: { title: "New conversation title" }
+    });
+  }
+});
 
 // Title update routes - support both patterns
 router.put('/:id/title', (req, res) => {
@@ -39,25 +74,7 @@ router.put('/:id/rename', (req, res) => {
   }
 });
 
-// Add this route for direct PUT requests to the base conversation URL
-router.put('/:id', (req, res) => {
-  if (conversationController.updateConversationTitle) {
-    // Assume we're updating title if that's what's in the request
-    if (req.body.title) {
-      conversationController.updateConversationTitle(req, res);
-    } else {
-      res.status(400).json({
-        success: false,
-        message: 'Please provide a title or other data to update'
-      });
-    }
-  } else {
-    res.status(501).json({
-      success: false,
-      message: 'Update functionality is not implemented yet'
-    });
-  }
-});
+router.delete('/:id', conversationController.deleteConversation);
 
 // Continue conversation
 router.post('/:id/messages', conversationController.continueConversation);

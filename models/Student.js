@@ -60,7 +60,49 @@ const StudentSchema = new mongoose.Schema({
       ref: 'Course'
     },
     present: Boolean
-  }]
+  }],
+  bio: {
+    type: String,
+    trim: true
+  },
+  interests: [String],
+  birthDate: Date,
+  address: {
+    street: String,
+    city: String,
+    state: String,
+    country: String,
+    postalCode: String
+  },
+  emergencyContact: {
+    name: String,
+    relationship: String,
+    phone: String,
+    email: String
+  },
+  profilePicture: {
+    filename: String,
+    fileUrl: String,
+    mimeType: String,
+    size: Number
+  },
+  pendingUpdates: {
+    department: String,
+    level: String,
+    matricNumber: String,
+    requestedAt: Date,
+    reviewedAt: Date,
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending'
+    },
+    notes: String
+  }
 }, {
   timestamps: true
 });

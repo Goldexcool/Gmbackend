@@ -1,10 +1,16 @@
 const mongoose = require('mongoose');
 
-const AcademicSessionSchema = new mongoose.Schema({
+const academicSessionSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'Please provide a name for the academic session'],
     trim: true
+  },
+  year: {
+    type: String,
+    required: [true, 'Please provide the academic year'],
+    trim: true,
+    unique: true
   },
   startDate: {
     type: Date,
@@ -14,32 +20,38 @@ const AcademicSessionSchema = new mongoose.Schema({
     type: Date,
     required: [true, 'Please provide an end date']
   },
-  semesterType: {
-    type: String,
-    enum: ['first', 'second', 'third', 'summer'],
-    required: [true, 'Please specify semester type']
-  },
-  registrationStart: Date,
-  registrationEnd: Date,
-  registrationOpen: {
-    type: Boolean,
-    default: false
-  },
   isActive: {
     type: Boolean,
     default: false
   },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+  isArchived: {
+    type: Boolean,
+    default: false
   },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+  semesters: [{
+    name: String,
+    startDate: Date,
+    endDate: Date
+  }]
+}, { timestamps: true });
+
+// Validate endDate > startDate
+academicSessionSchema.pre('validate', function(next) {
+  if (this.endDate <= this.startDate) {
+    this.invalidate('endDate', 'End date must be after start date');
   }
-}, {
-  timestamps: true
+  next();
 });
 
-module.exports = mongoose.model('AcademicSession', AcademicSessionSchema);
+// Helper method to get current/most recent session
+academicSessionSchema.statics.getCurrent = async function() {
+  const session = await this.findOne({ isActive: true }).sort({ year: -1, createdAt: -1 });
+  if (!session) {
+    // If no active session, get most recent by year
+    return this.findOne().sort({ year: -1, createdAt: -1 });
+  }
+  return session;
+};
+
+const AcademicSession = mongoose.model('AcademicSession', academicSessionSchema);
+module.exports = AcademicSession;

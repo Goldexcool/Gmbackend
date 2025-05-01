@@ -1,150 +1,97 @@
 const Course = require('../models/Course');
-const User = require('../models/User');
 const Student = require('../models/Student');
 const Lecturer = require('../models/Lecturer');
-const mongoose = require('mongoose');
+const Department = require('../models/Department');
+const AcademicSession = require('../models/AcademicSession');
 
-// @desc    Create new course
-// @route   POST /api/courses
-// @access  Private (Lecturers only)
-exports.createCourse = async (req, res) => {
-  try {
-    const { 
-      title, 
-      code, 
-      description, 
-      credits, 
-      department, 
-      schedule, 
-      capacity, 
-      prerequisites,
-      syllabus 
-    } = req.body;
-    
-    // Validate required fields
-    if (!title || !description) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide title and description'
-      });
-    }
-    
-    // Verify lecturer role
-    if (req.user.role !== 'lecturer' && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only lecturers and admins can create courses'
-      });
-    }
-    
-    // Create course
-    const course = await Course.create({
-      title,
-      code,
-      description,
-      credits,
-      department,
-      schedule,
-      capacity,
-      prerequisites,
-      syllabus,
-      assignedLecturers: [req.user.id], // Assign creator as lecturer
-      createdBy: req.user.id
-    });
-    
-    // Add course to lecturer's courses
-    const lecturer = await Lecturer.findOne({ user: req.user.id });
-    if (lecturer) {
-      lecturer.courses.push(course._id);
-      await lecturer.save();
-    }
-    
-    res.status(201).json({
-      success: true,
-      message: 'Course created successfully',
-      course
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get all courses
-// @route   GET /api/courses
-// @access  Private
+/**
+ * @desc    Get all courses
+ * @route   GET /api/courses
+ * @access  Private
+ */
 exports.getAllCourses = async (req, res) => {
   try {
-    const { department, lecturer, search } = req.query;
-    let query = {};
+    const { 
+      department, 
+      level, 
+      semester, 
+      academicSession,
+      search,
+      page = 1,
+      limit = 20,
+      sortBy = 'code',
+      sortOrder = 'asc'
+    } = req.query;
     
-    // Build query filters
-    if (department) {
-      query.department = department;
-    }
+    // Build query object
+    const query = {};
     
-    if (lecturer) {
-      query.assignedLecturers = lecturer;
-    }
+    // Add filters if provided
+    if (department) query.department = department;
+    if (level) query.level = level;
+    if (semester) query.semester = semester;
+    if (academicSession) query.academicSession = academicSession;
     
+    // Add search functionality
     if (search) {
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } }
+        { code: { $regex: search, $options: 'i' } },
+        { title: { $regex: search, $options: 'i' } }
       ];
     }
     
-    // Get courses with pagination
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
-    const startIndex = (page - 1) * limit;
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
     
+    // Build sort options
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'asc' ? 1 : -1;
+    
+    // Execute query with pagination
     const courses = await Course.find(query)
-      .populate('assignedLecturers', 'fullName')
-      .skip(startIndex)
-      .limit(limit)
-      .sort({ title: 1 });
+      .populate('department', 'name code')
+      .populate('lecturer', 'user')
+      .populate('lecturer.user', 'name')
+      .populate('academicSession', 'name year')
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(parseInt(limit));
     
+    // Get total count for pagination
     const total = await Course.countDocuments(query);
     
     res.status(200).json({
       success: true,
       count: courses.length,
       total,
-      pagination: {
-        current: page,
-        totalPages: Math.ceil(total / limit),
-        limit
-      },
-      courses
+      pages: Math.ceil(total / parseInt(limit)),
+      currentPage: parseInt(page),
+      data: courses
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error getting courses:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error getting courses',
       error: error.message
     });
   }
 };
 
-// @desc    Get single course
-// @route   GET /api/courses/:id
-// @access  Private
-exports.getCourse = async (req, res) => {
+/**
+ * @desc    Get a single course by ID
+ * @route   GET /api/courses/:id
+ * @access  Private
+ */
+exports.getCourseById = async (req, res) => {
   try {
-    const course = await Course.findById(req.params.id)
-      .populate('assignedLecturers', 'fullName')
-      .populate('prerequisites', 'title code')
-      .populate({
-        path: 'enrolledStudents',
-        select: 'fullName email',
-      });
+    const { id } = req.params;
+    
+    const course = await Course.findById(id)
+      .populate('department', 'name code')
+      .populate('lecturer', 'user staffId')
+      .populate('lecturer.user', 'name email')
+      .populate('academicSession', 'name year isActive');
     
     if (!course) {
       return res.status(404).json({
@@ -152,34 +99,124 @@ exports.getCourse = async (req, res) => {
         message: 'Course not found'
       });
     }
+    
+    // Get enrollment count
+    const enrollmentCount = await Student.countDocuments({
+      courses: course._id
+    });
+    
+    // Add enrollment count to response
+    const courseWithStats = {
+      ...course.toObject(),
+      enrollmentCount
+    };
     
     res.status(200).json({
       success: true,
-      course
+      data: courseWithStats
     });
   } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
+    console.error('Error getting course:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error getting course',
       error: error.message
     });
   }
 };
 
-// @desc    Update course
-// @route   PUT /api/courses/:id
-// @access  Private (Lecturer/Admin only)
+/**
+ * @desc    Create a new course
+ * @route   POST /api/courses
+ * @access  Private/Admin
+ */
+exports.createCourse = async (req, res) => {
+  try {
+    const {
+      code,
+      title,
+      description,
+      department,
+      level,
+      semester,
+      credits,
+      lecturer,
+      academicSession,
+      prerequisites,
+      isElective
+    } = req.body;
+    
+    // Check for duplicate course code
+    const existingCourse = await Course.findOne({ code });
+    if (existingCourse) {
+      return res.status(400).json({
+        success: false,
+        message: `Course with code ${code} already exists`
+      });
+    }
+    
+    // Create the course
+    const course = await Course.create({
+      code,
+      title,
+      description,
+      department,
+      level,
+      semester,
+      credits,
+      lecturer,
+      academicSession,
+      prerequisites: prerequisites || [],
+      isElective: isElective || false
+    });
+    
+    // If lecturer is assigned, update their courses array
+    if (lecturer) {
+      await Lecturer.findByIdAndUpdate(
+        lecturer,
+        { $addToSet: { courses: course._id } }
+      );
+    }
+    
+    res.status(201).json({
+      success: true,
+      message: 'Course created successfully',
+      data: course
+    });
+  } catch (error) {
+    console.error('Error creating course:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating course',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Update a course
+ * @route   PUT /api/courses/:id
+ * @access  Private/Admin
+ */
 exports.updateCourse = async (req, res) => {
   try {
-    let course = await Course.findById(req.params.id);
+    const { id } = req.params;
+    const {
+      code,
+      title,
+      description,
+      department,
+      level,
+      semester,
+      credits,
+      lecturer,
+      academicSession,
+      prerequisites,
+      isElective
+    } = req.body;
     
+    // Check if course exists
+    const course = await Course.findById(id);
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -187,53 +224,90 @@ exports.updateCourse = async (req, res) => {
       });
     }
     
-    // Check if user is a lecturer assigned to this course or admin
-    const isAuthorized = 
-      req.user.role === 'admin' || 
-      course.assignedLecturers.includes(req.user.id);
-    
-    if (!isAuthorized) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to update this course'
-      });
+    // If code is changing, check for duplicates
+    if (code && code !== course.code) {
+      const existingCourse = await Course.findOne({ code });
+      if (existingCourse) {
+        return res.status(400).json({
+          success: false,
+          message: `Course with code ${code} already exists`
+        });
+      }
     }
     
-    // Update course
-    course = await Course.findByIdAndUpdate(
-      req.params.id, 
-      req.body, 
-      { new: true, runValidators: true }
-    );
+    // Handle lecturer change
+    const oldLecturer = course.lecturer;
+    
+    // Update the course
+    const updatedCourse = await Course.findByIdAndUpdate(
+      id,
+      {
+        code: code || course.code,
+        title: title || course.title,
+        description: description || course.description,
+        department: department || course.department,
+        level: level || course.level,
+        semester: semester || course.semester,
+        credits: credits || course.credits,
+        lecturer: lecturer || course.lecturer,
+        academicSession: academicSession || course.academicSession,
+        prerequisites: prerequisites || course.prerequisites,
+        isElective: isElective !== undefined ? isElective : course.isElective
+      },
+      { new: true }
+    )
+    .populate('department', 'name code')
+    .populate('lecturer', 'user')
+    .populate('lecturer.user', 'name')
+    .populate('academicSession', 'name year');
+    
+    // Update lecturer references if changed
+    if (lecturer && oldLecturer && lecturer.toString() !== oldLecturer.toString()) {
+      // Remove course from old lecturer's list
+      await Lecturer.findByIdAndUpdate(
+        oldLecturer,
+        { $pull: { courses: course._id } }
+      );
+      
+      // Add course to new lecturer's list
+      await Lecturer.findByIdAndUpdate(
+        lecturer,
+        { $addToSet: { courses: course._id } }
+      );
+    } else if (lecturer && !oldLecturer) {
+      // Add course to new lecturer's list
+      await Lecturer.findByIdAndUpdate(
+        lecturer,
+        { $addToSet: { courses: course._id } }
+      );
+    }
     
     res.status(200).json({
       success: true,
       message: 'Course updated successfully',
-      course
+      data: updatedCourse
     });
   } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
+    console.error('Error updating course:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error updating course',
       error: error.message
     });
   }
 };
 
-// @desc    Delete course
-// @route   DELETE /api/courses/:id
-// @access  Private (Admin only)
+/**
+ * @desc    Delete a course
+ * @route   DELETE /api/courses/:id
+ * @access  Private/Admin
+ */
 exports.deleteCourse = async (req, res) => {
   try {
-    const course = await Course.findById(req.params.id);
+    const { id } = req.params;
     
+    // Check if course exists
+    const course = await Course.findById(id);
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -241,193 +315,76 @@ exports.deleteCourse = async (req, res) => {
       });
     }
     
-    // Only admin can delete courses
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only administrators can delete courses'
-      });
+    // Remove course from lecturer's list
+    if (course.lecturer) {
+      await Lecturer.findByIdAndUpdate(
+        course.lecturer,
+        { $pull: { courses: course._id } }
+      );
     }
     
-    await course.deleteOne();
-    
-    // Remove course from lecturers
-    await Lecturer.updateMany(
-      { courses: req.params.id },
-      { $pull: { courses: req.params.id } }
-    );
-    
-    res.status(200).json({
-      success: true,
-      message: 'Course deleted successfully',
-      data: {}
-    });
-  } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Enroll student in course
-// @route   POST /api/courses/enroll/:id
-// @access  Private (Students only)
-exports.enrollCourse = async (req, res) => {
-  try {
-    // Verify student role
-    if (req.user.role !== 'student') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only students can enroll in courses'
-      });
-    }
-    
-    const course = await Course.findById(req.params.id);
-    
-    if (!course) {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
-    
-    // Check if student is already enrolled
-    if (course.enrolledStudents.includes(req.user.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are already enrolled in this course'
-      });
-    }
-    
-    // Check if course is at capacity
-    if (course.capacity && course.enrolledStudents.length >= course.capacity) {
-      return res.status(400).json({
-        success: false,
-        message: 'This course has reached its capacity'
-      });
-    }
-    
-    // Add student to course
-    course.enrolledStudents.push(req.user.id);
-    await course.save();
-    
-    // Add course to student
-    const student = await Student.findOne({ user: req.user.id });
-    if (student) {
-      student.courses.push(course._id);
-      await student.save();
-    }
-    
-    // Notify lecturer if requested
-    if (req.body.notifyInstructor && course.assignedLecturers.length > 0) {
-      // In a real app, you'd send notification to lecturer here
-      console.log(`Notifying lecturer about new enrollment: ${req.user.id} in ${course.title}`);
-    }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Successfully enrolled in the course',
-      course: {
-        id: course._id,
-        title: course.title,
-        code: course.code
-      }
-    });
-  } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Unenroll student from course
-// @route   DELETE /api/courses/unenroll/:id
-// @access  Private (Students only)
-exports.unenrollCourse = async (req, res) => {
-  try {
-    // Verify student role
-    if (req.user.role !== 'student') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only students can unenroll from courses'
-      });
-    }
-    
-    const course = await Course.findById(req.params.id);
-    
-    if (!course) {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
-    
-    // Check if student is enrolled
-    if (!course.enrolledStudents.includes(req.user.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are not enrolled in this course'
-      });
-    }
-    
-    // Remove student from course
-    course.enrolledStudents = course.enrolledStudents.filter(
-      student => student.toString() !== req.user.id
-    );
-    await course.save();
-    
-    // Remove course from student
-    await Student.updateOne(
-      { user: req.user.id },
+    // Remove course from all students' lists
+    await Student.updateMany(
+      { courses: course._id },
       { $pull: { courses: course._id } }
     );
     
+    // Delete the course
+    await Course.findByIdAndDelete(id);
+    
     res.status(200).json({
       success: true,
-      message: 'Successfully unenrolled from the course',
-      data: {}
+      message: 'Course deleted successfully'
     });
   } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
+    console.error('Error deleting course:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error deleting course',
       error: error.message
     });
   }
 };
 
-// @desc    Get enrolled students for a course
-// @route   GET /api/courses/:id/students
-// @access  Private (Lecturers only)
-exports.getCourseStudents = async (req, res) => {
+/**
+ * @desc    Get public course listing
+ * @route   GET /api/courses/public
+ * @access  Public
+ */
+exports.getPublicCourses = async (req, res) => {
   try {
-    const course = await Course.findById(req.params.id);
+    const courses = await Course.find()
+      .select('code title department level credits')
+      .populate('department', 'name')
+      .sort({ code: 1 })
+      .limit(100);
     
+    res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: courses
+    });
+  } catch (error) {
+    console.error('Error getting public courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting public courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get course resources
+ * @route   GET /api/courses/:id/resources
+ * @access  Private
+ */
+exports.getCourseResources = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find course
+    const course = await Course.findById(id);
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -435,144 +392,359 @@ exports.getCourseStudents = async (req, res) => {
       });
     }
     
-    // Verify lecturer is assigned to this course or admin
-    const isAuthorized = 
-      req.user.role === 'admin' || 
-      (req.user.role === 'lecturer' && course.assignedLecturers.includes(req.user.id));
+    // Get current active academic session
+    const activeSession = await AcademicSession.findOne({ isActive: true });
     
-    if (!isAuthorized) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to access this information'
-      });
+    // Find resources for this course
+    const CourseResource = require('../models/CourseResource');
+    const query = { course: id };
+    
+    // If user is a student, only show resources visible to students
+    if (req.user.role === 'student') {
+      query.visibleToStudents = true;
+      
+      // Also check if student is enrolled in this course
+      const student = await Student.findOne({ user: req.user.id });
+      if (!student) {
+        return res.status(404).json({
+          success: false,
+          message: 'Student profile not found'
+        });
+      }
+      
+      const isEnrolled = student.courses.some(
+        courseId => courseId.toString() === id
+      );
+      
+      if (!isEnrolled) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not enrolled in this course'
+        });
+      }
     }
     
-    // Get student details
-    const students = await User.find({
-      _id: { $in: course.enrolledStudents },
-      role: 'student'
-    }).select('fullName email avatar');
+    // If active session exists, default to showing resources from that session
+    const { academicSession = activeSession?._id } = req.query;
+    if (academicSession) {
+      query.academicSession = academicSession;
+    }
+    
+    const resources = await CourseResource.find(query)
+      .populate('lecturer', 'user')
+      .populate('lecturer.user', 'name')
+      .populate('academicSession', 'name year')
+      .sort('-createdAt');
     
     res.status(200).json({
       success: true,
-      count: students.length,
-      students
+      count: resources.length,
+      data: resources
     });
   } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
+    console.error('Error getting course resources:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting course resources',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get courses by department
+ * @route   GET /api/courses/by-department/:departmentId
+ * @access  Private/Admin
+ */
+exports.getCoursesByDepartment = async (req, res) => {
+  try {
+    const { departmentId } = req.params;
+    
+    const courses = await Course.find({ department: departmentId })
+      .populate('lecturer', 'user')
+      .populate('lecturer.user', 'name')
+      .populate('academicSession', 'name year')
+      .sort('code');
+    
+    res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: courses
+    });
+  } catch (error) {
+    console.error('Error getting department courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting department courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get courses by faculty
+ * @route   GET /api/courses/by-faculty/:facultyId
+ * @access  Private/Admin
+ */
+exports.getCoursesByFaculty = async (req, res) => {
+  try {
+    const { facultyId } = req.params;
+    
+    // Find departments in this faculty
+    const departments = await Department.find({ faculty: facultyId });
+    const departmentIds = departments.map(dept => dept._id);
+    
+    // Find courses in these departments
+    const courses = await Course.find({ department: { $in: departmentIds } })
+      .populate('department', 'name code')
+      .populate('lecturer', 'user')
+      .populate('lecturer.user', 'name')
+      .populate('academicSession', 'name year')
+      .sort('department code');
+    
+    res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: courses
+    });
+  } catch (error) {
+    console.error('Error getting faculty courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting faculty courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get courses by academic session
+ * @route   GET /api/courses/by-session/:sessionId
+ * @access  Private/Admin
+ */
+exports.getCoursesBySession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const courses = await Course.find({ academicSession: sessionId })
+      .populate('department', 'name code')
+      .populate('lecturer', 'user')
+      .populate('lecturer.user', 'name')
+      .sort('code');
+    
+    res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: courses
+    });
+  } catch (error) {
+    console.error('Error getting session courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting session courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Enroll students in a course
+ * @route   POST /api/courses/:id/enroll
+ * @access  Private/Admin
+ */
+exports.enrollStudents = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { studentIds } = req.body;
+    
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of student IDs'
+      });
+    }
+    
+    // Check if course exists
+    const course = await Course.findById(id);
+    if (!course) {
       return res.status(404).json({
         success: false,
         message: 'Course not found'
       });
     }
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get courses user is enrolled in
-// @route   GET /api/courses/enrolled
-// @access  Private (Students only)
-exports.getEnrolledCourses = async (req, res) => {
-  try {
-    // Verify student role
-    if (req.user.role !== 'student') {
-      return res.status(403).json({
-        success: false,
-        message: 'This endpoint is for students only'
-      });
-    }
     
-    const student = await Student.findOne({ user: req.user.id });
+    // Update each student's courses
+    const updatePromises = studentIds.map(studentId =>
+      Student.findByIdAndUpdate(
+        studentId,
+        { $addToSet: { courses: id } }
+      )
+    );
     
-    if (!student) {
-      return res.status(404).json({
-        success: false,
-        message: 'Student record not found'
-      });
-    }
-    
-    const courses = await Course.find({
-      _id: { $in: student.courses }
-    }).select('title code description department schedule');
+    await Promise.all(updatePromises);
     
     res.status(200).json({
       success: true,
-      count: courses.length,
-      courses
+      message: `${studentIds.length} student(s) enrolled in course successfully`,
+      data: {
+        courseId: id,
+        courseCode: course.code,
+        courseTitle: course.title,
+        enrolledStudents: studentIds.length
+      }
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error enrolling students:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error enrolling students',
       error: error.message
     });
   }
 };
 
-// @desc    Get courses user is teaching
-// @route   GET /api/courses/teaching
-// @access  Private (Lecturers only)
-exports.getTeachingCourses = async (req, res) => {
+/**
+ * @desc    Remove students from a course
+ * @route   DELETE /api/courses/:id/enroll
+ * @access  Private/Admin
+ */
+exports.removeStudentsFromCourse = async (req, res) => {
   try {
-    // Verify lecturer role
-    if (req.user.role !== 'lecturer') {
-      return res.status(403).json({
+    const { id } = req.params;
+    const { studentIds } = req.body;
+    
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({
         success: false,
-        message: 'This endpoint is for lecturers only'
+        message: 'Please provide an array of student IDs'
       });
     }
     
-    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    // Check if course exists
+    const course = await Course.findById(id);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
     
+    // Update each student's courses
+    const updatePromises = studentIds.map(studentId =>
+      Student.findByIdAndUpdate(
+        studentId,
+        { $pull: { courses: id } }
+      )
+    );
+    
+    await Promise.all(updatePromises);
+    
+    res.status(200).json({
+      success: true,
+      message: `${studentIds.length} student(s) removed from course successfully`,
+      data: {
+        courseId: id,
+        courseCode: course.code,
+        courseTitle: course.title,
+        removedStudents: studentIds.length
+      }
+    });
+  } catch (error) {
+    console.error('Error removing students:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error removing students',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Assign lecturer to a course
+ * @route   POST /api/courses/:id/assign-lecturer
+ * @access  Private/Admin
+ */
+exports.assignLecturer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lecturerId } = req.body;
+    
+    if (!lecturerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a lecturer ID'
+      });
+    }
+    
+    // Check if course exists
+    const course = await Course.findById(id);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
+    
+    // Check if lecturer exists
+    const lecturer = await Lecturer.findById(lecturerId);
     if (!lecturer) {
       return res.status(404).json({
         success: false,
-        message: 'Lecturer record not found'
+        message: 'Lecturer not found'
       });
     }
     
-    const courses = await Course.find({
-      _id: { $in: lecturer.courses }
-    }).select('title code description department schedule enrolledStudents');
+    // Update course with new lecturer
+    const oldLecturerId = course.lecturer;
+    course.lecturer = lecturerId;
+    await course.save();
+    
+    // Add course to new lecturer's courses
+    await Lecturer.findByIdAndUpdate(
+      lecturerId,
+      { $addToSet: { courses: id } }
+    );
+    
+    // Remove course from old lecturer's courses if applicable
+    if (oldLecturerId) {
+      await Lecturer.findByIdAndUpdate(
+        oldLecturerId,
+        { $pull: { courses: id } }
+      );
+    }
     
     res.status(200).json({
       success: true,
-      count: courses.length,
-      courses
+      message: 'Lecturer assigned to course successfully',
+      data: {
+        courseId: id,
+        courseCode: course.code,
+        courseTitle: course.title,
+        lecturerId,
+        lecturerName: lecturer.user ? lecturer.user.name : undefined
+      }
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error assigning lecturer:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error assigning lecturer',
       error: error.message
     });
   }
 };
 
-// @desc    Add course material
-// @route   POST /api/courses/:id/materials
-// @access  Private (Lecturers only)
-exports.addCourseMaterial = async (req, res) => {
+/**
+ * @desc    Remove lecturer from a course
+ * @route   DELETE /api/courses/:id/lecturer
+ * @access  Private/Admin
+ */
+exports.removeLecturer = async (req, res) => {
   try {
-    const { title, type, url } = req.body;
+    const { id } = req.params;
     
-    // Validate required fields
-    if (!title || !type || !url) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide title, type, and URL for the material'
-      });
-    }
-    
-    const course = await Course.findById(req.params.id);
-    
+    // Check if course exists
+    const course = await Course.findById(id);
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -580,48 +752,418 @@ exports.addCourseMaterial = async (req, res) => {
       });
     }
     
-    // Verify lecturer is assigned to this course or admin
-    const isAuthorized = 
-      req.user.role === 'admin' || 
-      (req.user.role === 'lecturer' && course.assignedLecturers.includes(req.user.id));
-    
-    if (!isAuthorized) {
-      return res.status(403).json({
+    // Check if course has a lecturer assigned
+    if (!course.lecturer) {
+      return res.status(400).json({
         success: false,
-        message: 'Not authorized to add materials to this course'
+        message: 'Course does not have a lecturer assigned'
       });
     }
     
-    // Add material to course
-    const material = {
-      title,
-      type,
-      url,
-      uploadedBy: req.user.id,
-      uploadedAt: Date.now()
-    };
+    const oldLecturerId = course.lecturer;
     
-    course.materials = course.materials || [];
-    course.materials.push(material);
-    
+    // Remove lecturer from course
+    course.lecturer = null;
     await course.save();
+    
+    // Remove course from lecturer's courses
+    await Lecturer.findByIdAndUpdate(
+      oldLecturerId,
+      { $pull: { courses: id } }
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: 'Lecturer removed from course successfully',
+      data: {
+        courseId: id,
+        courseCode: course.code,
+        courseTitle: course.title
+      }
+    });
+  } catch (error) {
+    console.error('Error removing lecturer:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error removing lecturer',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Bulk create multiple courses
+ * @route   POST /api/courses/bulk-create
+ * @access  Private/Admin
+ */
+exports.bulkCreateCourses = async (req, res) => {
+  try {
+    const { courses } = req.body;
+    
+    if (!courses || !Array.isArray(courses) || courses.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of courses'
+      });
+    }
+    
+    // Check for duplicate course codes
+    const courseCodes = courses.map(c => c.code);
+    const existingCourses = await Course.find({ code: { $in: courseCodes } });
+    
+    if (existingCourses.length > 0) {
+      const existingCodes = existingCourses.map(c => c.code);
+      return res.status(400).json({
+        success: false,
+        message: 'Some course codes already exist',
+        duplicates: existingCodes
+      });
+    }
+    
+    // Create all courses
+    const createdCourses = await Course.insertMany(courses);
+    
+    // Update lecturer references
+    const lecturerUpdates = courses
+      .filter(c => c.lecturer)
+      .map(c => {
+        const courseObj = createdCourses.find(cc => cc.code === c.code);
+        return Lecturer.findByIdAndUpdate(
+          c.lecturer,
+          { $addToSet: { courses: courseObj._id } }
+        );
+      });
+    
+    await Promise.all(lecturerUpdates);
     
     res.status(201).json({
       success: true,
-      message: 'Course material added successfully',
-      material
+      message: `${createdCourses.length} courses created successfully`,
+      data: createdCourses
     });
   } catch (error) {
-    console.error(error);
-    if (error.kind === 'ObjectId') {
-      return res.status(404).json({
-        success: false,
-        message: 'Course not found'
-      });
-    }
+    console.error('Error bulk creating courses:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'Error bulk creating courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Bulk update multiple courses
+ * @route   POST /api/courses/bulk-update
+ * @access  Private/Admin
+ */
+exports.bulkUpdateCourses = async (req, res) => {
+  try {
+    const { courses } = req.body;
+    
+    if (!courses || !Array.isArray(courses) || courses.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of courses to update'
+      });
+    }
+    
+    // Make sure each course has an ID
+    const coursesWithIds = courses.filter(c => c._id);
+    
+    if (coursesWithIds.length !== courses.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Each course must have an _id field'
+      });
+    }
+    
+    // Update each course and track lecturer changes
+    const updateResults = [];
+    const lecturerChanges = [];
+    
+    for (const course of coursesWithIds) {
+      // Get current course data to check for lecturer change
+      const currentCourse = await Course.findById(course._id);
+      if (!currentCourse) {
+        updateResults.push({
+          _id: course._id,
+          success: false,
+          message: 'Course not found'
+        });
+        continue;
+      }
+      
+      // Track lecturer change if applicable
+      if (course.lecturer && currentCourse.lecturer && 
+          course.lecturer.toString() !== currentCourse.lecturer.toString()) {
+        lecturerChanges.push({
+          courseId: course._id,
+          oldLecturer: currentCourse.lecturer,
+          newLecturer: course.lecturer
+        });
+      } else if (course.lecturer && !currentCourse.lecturer) {
+        lecturerChanges.push({
+          courseId: course._id,
+          oldLecturer: null,
+          newLecturer: course.lecturer
+        });
+      } else if (!course.lecturer && currentCourse.lecturer) {
+        lecturerChanges.push({
+          courseId: course._id,
+          oldLecturer: currentCourse.lecturer,
+          newLecturer: null
+        });
+      }
+      
+      // Update the course
+      try {
+        const updatedCourse = await Course.findByIdAndUpdate(
+          course._id,
+          { $set: course },
+          { new: true }
+        );
+        
+        updateResults.push({
+          _id: course._id,
+          success: true,
+          course: updatedCourse
+        });
+      } catch (err) {
+        updateResults.push({
+          _id: course._id,
+          success: false,
+          message: err.message
+        });
+      }
+    }
+    
+    // Process lecturer changes
+    for (const change of lecturerChanges) {
+      // Remove course from old lecturer
+      if (change.oldLecturer) {
+        await Lecturer.findByIdAndUpdate(
+          change.oldLecturer,
+          { $pull: { courses: change.courseId } }
+        );
+      }
+      
+      // Add course to new lecturer
+      if (change.newLecturer) {
+        await Lecturer.findByIdAndUpdate(
+          change.newLecturer,
+          { $addToSet: { courses: change.courseId } }
+        );
+      }
+    }
+    
+    const successCount = updateResults.filter(r => r.success).length;
+    
+    res.status(200).json({
+      success: true,
+      message: `${successCount} out of ${courses.length} courses updated successfully`,
+      data: updateResults
+    });
+  } catch (error) {
+    console.error('Error bulk updating courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error bulk updating courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Bulk delete multiple courses
+ * @route   POST /api/courses/bulk-delete
+ * @access  Private/Admin
+ */
+exports.bulkDeleteCourses = async (req, res) => {
+  try {
+    const { courseIds } = req.body;
+    
+    if (!courseIds || !Array.isArray(courseIds) || courseIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of course IDs'
+      });
+    }
+    
+    // Get courses to get lecturer references
+    const courses = await Course.find({ _id: { $in: courseIds } });
+    
+    // Get unique lecturer IDs
+    const lecturerIds = [...new Set(
+      courses
+        .filter(c => c.lecturer)
+        .map(c => c.lecturer.toString())
+    )];
+    
+    // Delete courses
+    await Course.deleteMany({ _id: { $in: courseIds } });
+    
+    // Update lecturer references
+    const lecturerUpdates = lecturerIds.map(lecturerId =>
+      Lecturer.findByIdAndUpdate(
+        lecturerId,
+        { $pull: { courses: { $in: courseIds } } }
+      )
+    );
+    
+    // Update student references
+    await Student.updateMany(
+      { courses: { $in: courseIds } },
+      { $pull: { courses: { $in: courseIds } } }
+    );
+    
+    await Promise.all(lecturerUpdates);
+    
+    res.status(200).json({
+      success: true,
+      message: `${courseIds.length} courses deleted successfully`,
+      data: {
+        deletedCount: courseIds.length,
+        courseIds
+      }
+    });
+  } catch (error) {
+    console.error('Error bulk deleting courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error bulk deleting courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get course statistics
+ * @route   GET /api/courses/statistics
+ * @access  Private/Admin
+ */
+exports.getCourseStatistics = async (req, res) => {
+  try {
+    // Get total number of courses
+    const totalCourses = await Course.countDocuments();
+    
+    // Get courses per department
+    const coursesPerDepartment = await Course.aggregate([
+      { 
+        $group: { 
+          _id: '$department', 
+          count: { $sum: 1 },
+          courses: { $push: { id: '$_id', code: '$code', title: '$title' } }
+        } 
+      },
+      { $sort: { count: -1 } }
+    ]);
+    
+    // Get department details
+    const departmentIds = coursesPerDepartment.map(dept => dept._id);
+    const departments = await Department.find({ _id: { $in: departmentIds } });
+    
+    // Map department details to statistics
+    const departmentStats = coursesPerDepartment.map(dept => {
+      const departmentDetails = departments.find(
+        d => d._id.toString() === dept._id.toString()
+      );
+      return {
+        department: departmentDetails ? {
+          _id: departmentDetails._id,
+          name: departmentDetails.name,
+          code: departmentDetails.code
+        } : { _id: dept._id, name: 'Unknown Department' },
+        courseCount: dept.count,
+        courses: dept.courses
+      };
+    });
+    
+    // Get courses per academic level
+    const coursesPerLevel = await Course.aggregate([
+      { 
+        $group: { 
+          _id: '$level', 
+          count: { $sum: 1 } 
+        } 
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    
+    // Get courses with highest enrollment
+    const enrollmentPerCourse = await Student.aggregate([
+      { $unwind: '$courses' },
+      { 
+        $group: { 
+          _id: '$courses', 
+          studentCount: { $sum: 1 } 
+        } 
+      },
+      { $sort: { studentCount: -1 } },
+      { $limit: 10 }
+    ]);
+    
+    // Get course details for enrollment stats
+    const courseIds = enrollmentPerCourse.map(item => item._id);
+    const topCourses = await Course.find(
+      { _id: { $in: courseIds } },
+      'code title level department'
+    );
+    
+    // Map course details to enrollment stats
+    const enrollmentStats = enrollmentPerCourse.map(item => {
+      const course = topCourses.find(c => c._id.toString() === item._id.toString());
+      return {
+        course: course ? {
+          _id: course._id,
+          code: course.code,
+          title: course.title,
+          level: course.level
+        } : { _id: item._id, title: 'Unknown Course' },
+        studentCount: item.studentCount
+      };
+    });
+    
+    // Get lecturer course assignment stats
+    const lecturerCourseStats = await Lecturer.aggregate([
+      { $project: { _id: 1, coursesCount: { $size: '$courses' } } },
+      { $sort: { coursesCount: -1 } },
+      { $limit: 10 }
+    ]);
+    
+    // Get lecturer details
+    const lecturerIds = lecturerCourseStats.map(item => item._id);
+    const topLecturers = await Lecturer.find(
+      { _id: { $in: lecturerIds } }
+    ).populate('user', 'name email');
+    
+    // Map lecturer details to stats
+    const lecturerStats = lecturerCourseStats.map(item => {
+      const lecturer = topLecturers.find(l => l._id.toString() === item._id.toString());
+      return {
+        lecturer: lecturer ? {
+          _id: lecturer._id,
+          name: lecturer.user?.name || 'Unknown',
+          email: lecturer.user?.email
+        } : { _id: item._id, name: 'Unknown Lecturer' },
+        coursesCount: item.coursesCount
+      };
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        totalCourses,
+        departmentStats,
+        coursesPerLevel,
+        topEnrollments: enrollmentStats,
+        topLecturers: lecturerStats
+      }
+    });
+  } catch (error) {
+    console.error('Error getting course statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting course statistics',
       error: error.message
     });
   }

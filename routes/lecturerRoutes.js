@@ -1,46 +1,66 @@
 const express = require('express');
-const { 
-    setSchedule,
-    createTask,
-    updateTask,
-    getStudents,
-    assignCourseRep,
-    getLecturerProfile
-} = require('../controllers/lecturerController');
-const { protect, authorize } = require('../middleware/authMiddleware');
-const ROLES = { LECTURER: 'lecturer', STUDENT: 'student', ADMIN: 'admin' };
-const lecturerController = require('../controllers/lecturerController');
-
 const router = express.Router();
+const lecturerController = require('../controllers/lecturerController');
+const resourceController = require('../controllers/resourceController');
+const assignmentController = require('../controllers/assignmentController');
+const courseRepController = require('../controllers/courseRepController');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const fileUpload = require('../middleware/fileUpload');
 
-// Apply middleware to all routes
+// Apply auth middleware to all routes
 router.use(protect);
-router.use(authorize(ROLES.LECTURER));
+router.use(authorize('lecturer'));
 
-// IMPORTANT: Place specific routes BEFORE parameter routes
-// FAQ routes - move these up
+// Profile routes
+router.put('/profile', fileUpload.uploadSingle('profilePicture'), lecturerController.updateLecturerProfile);
+
+// Course resources routes
+router.get('/resources', resourceController.getLecturerResources);
+router.get('/resources/:id', resourceController.getLecturerResource);
+router.post(
+  '/resources', 
+  fileUpload.uploadMultiple('files', 5), 
+  resourceController.createResource
+);
+router.put(
+  '/resources/:id', 
+  fileUpload.uploadMultiple('files', 5), 
+  resourceController.updateResource
+);
+router.delete('/resources/:id', resourceController.deleteResource);
+
+// Assignment routes
+router.get('/assignments', assignmentController.getLecturerAssignments);
+router.get('/assignments/:id', lecturerController.getLecturerAssignment);
+
+// Course representative routes
+router.get('/course-reps', courseRepController.getCourseReps);
+router.post('/courses/:courseId/course-rep', courseRepController.assignCourseRep);
+router.delete('/course-reps/:repId', courseRepController.removeCourseRep);
+router.get('/course-reps/:repId/chat', courseRepController.getChatMessages);
+router.post(
+  '/course-reps/:repId/chat',
+  fileUpload.uploadMultiple('attachments', 5),
+  courseRepController.sendMessage
+);
+
+// Student routes
+router.get('/courses/:courseId/students', courseRepController.getEnrolledStudents);
+router.get('/students', courseRepController.getStudentsByDepartmentAndLevel);
+
+// FAQ routes
 router.get('/faqs', lecturerController.getAllFAQs);
 
-// Department routes - move these up
+// Department routes
 router.get('/departments', lecturerController.getDepartments);
 router.get('/departments/:departmentName', lecturerController.getDepartmentDetails);
 
-// Set class time/venue
-router.post('/:id/schedule', setSchedule); 
+// Schedule and task routes
+router.post('/schedule', lecturerController.setSchedule);
+router.post('/tasks', lecturerController.createTask);
+router.put('/tasks/:taskId', lecturerController.updateTask);
 
-// Add personal task
-router.post('/:id/tasks', createTask);
-
-// Update task
-router.put('/:id/tasks/:taskId', updateTask);
-
-// View students
-router.get('/:id/students', getStudents);
-
-// Assign course rep
-router.post('/:id/course-rep', assignCourseRep);
-
-// Get lecturer profile - most generic path should be last
-router.get('/:id', getLecturerProfile);
+// Chat routes
+router.post('/chat', lecturerController.chatWithStudent);
 
 module.exports = router;

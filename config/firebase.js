@@ -2,7 +2,9 @@
 const admin = require('firebase-admin');
 require('dotenv').config();
 
-// Handle Firebase initialization with environment variables
+// Check if Firebase is initialized
+let bucket = null;
+
 try {
   console.log('Initializing Firebase with environment variables...');
   
@@ -22,23 +24,27 @@ try {
     client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL
   };
 
-  // Initialize Firebase Admin
-  admin.initializeApp({
-    credential: admin.credential.cert(firebaseConfig),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-  });
+  // Only initialize if not already initialized and if credentials exist
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(firebaseConfig),
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+    });
+    bucket = admin.storage().bucket();
+  } else {
+    bucket = admin.storage().bucket();
+  }
 
   console.log('Firebase initialized successfully');
 
   // Export Firebase Admin services
   const db = admin.firestore();
-  const storage = admin.storage().bucket();
   const auth = admin.auth();
 
   module.exports = {
     admin,
     db,
-    storage,
+    bucket,
     auth
   };
 } catch (error) {
@@ -60,13 +66,9 @@ try {
         })
       })
     },
-    storage: {
-      file: () => ({
-        save: async () => ({}),
-        makePublic: async () => ({}),
-        getSignedUrl: async () => ['https://mock-url.com/file']
-      }),
-      name: 'mock-bucket'
+    bucket: {
+      upload: () => Promise.resolve({ publicUrl: () => "" }),
+      file: () => ({ delete: () => Promise.resolve() })
     },
     auth: {
       verifyIdToken: async () => ({ uid: 'mock-user-id' })

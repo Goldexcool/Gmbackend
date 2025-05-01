@@ -1,39 +1,72 @@
 const express = require('express');
-const { 
-    getDashboard, 
-    getSchedule, 
-    createTask, 
-    updateTask, 
-    getStudentProfile,
-    getDepartments,
-    getDepartmentDetails
-} = require('../controllers/studentController');
-const { protect, authorize } = require('../middleware/authMiddleware');
-const { ROLES } = require('../config/constants');
-
 const router = express.Router();
+const studentController = require('../controllers/studentController');
+const assignmentController = require('../controllers/assignmentController');
+const courseResourceController = require('../controllers/courseResourceController');
+const examTimetableController = require('../controllers/examTimetableController');
+const taskController = require('../controllers/taskController');
+const courseRepController = require('../controllers/courseRepController');
+const studentCourseRepController = require('../controllers/studentCourseRepController');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const fileUpload = require('../middleware/fileUpload');
 
-// Apply middleware to all routes
+// Apply auth middleware to all routes
 router.use(protect);
-router.use(authorize(ROLES.STUDENT));
+router.use(authorize('student'));
 
-// Get student dashboard
-router.get('/:id/dashboard', getDashboard);
+// Profile routes
+router.put('/profile', fileUpload.single('profilePicture'), studentController.updateStudentProfile);
 
-// Get student schedule
-router.get('/:id/schedule', getSchedule);
+// Course routes
+router.get('/courses', studentController.getEnrolledCourses);
+router.get('/courses/:id', studentController.getCourseDetails);
 
-// Create task
-router.post('/:id/tasks', createTask);
+// Course enrollment routes
+router.get('/courses/available', studentController.getAvailableCourses);
+router.post('/courses/:courseId/enroll', studentController.enrollInCourse);
+router.delete('/courses/:courseId/enroll', studentController.dropCourse);
+router.get('/courses/department', studentController.getCoursesByDepartmentAndLevel);
 
-// Update task (complete/reopen)
-router.put('/:id/tasks/:taskId', updateTask);
+// Assignment routes
+router.get('/assignments', assignmentController.getStudentAssignments);
+router.get('/assignments/:id', assignmentController.getStudentAssignment);
+router.post('/assignments/:id/submit', 
+  fileUpload.uploadMultiple('files', 5), 
+  assignmentController.submitAssignment);
+router.put('/assignments/:id/submit', 
+  fileUpload.uploadMultiple('files', 5), 
+  assignmentController.updateSubmission);
 
-// Get student profile
-router.get('/:id', getStudentProfile);
+// Task routes
+router.route('/tasks')
+  .get(taskController.getTasks)
+  .post(taskController.createTask);
 
-// Department routes
-router.get('/departments', getDepartments);
-router.get('/departments/:departmentName', getDepartmentDetails);
+router.route('/tasks/:id')
+  .get(taskController.getTask)
+  .put(taskController.updateTask)
+  .delete(taskController.deleteTask);
+
+router.put('/tasks/:id/toggle-status', taskController.toggleTaskStatus);
+
+// Resource routes
+router.get('/resources', courseResourceController.getStudentResources);
+router.get('/resources/:id', courseResourceController.getStudentResource);
+router.get('/resources/:id/download', courseResourceController.downloadResource);
+
+// Check if student is a course rep
+router.get('/is-course-rep', studentCourseRepController.getRepStatus);
+
+// Course rep routes
+router.get('/course-rep/status', studentCourseRepController.getRepStatus);
+router.get('/course-rep/:repId/chat', studentCourseRepController.getChatMessages);
+router.post(
+  '/course-rep/:repId/chat',
+  fileUpload.uploadMultiple('attachments', 5),
+  studentCourseRepController.sendMessage
+);
+
+// Timetable route
+router.get('/timetables', examTimetableController.getStudentTimetable);
 
 module.exports = router;

@@ -59,7 +59,25 @@ const UserSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
-  }
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  connectionCount: {
+    type: Number,
+    default: 0
+  },
+  connectionRequests: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    requestDate: {
+      type: Date,
+      default: Date.now
+    }
+  }]
 });
 
 // Encrypt password using bcrypt

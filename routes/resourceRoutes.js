@@ -1,44 +1,47 @@
 const express = require('express');
-const { 
-  uploadResource,
-  getAllResources,
-  getResourceById,
-  updateResource,
-  deleteResource,
-  searchResources,
-  getResourcesByCategory,
-  downloadResource
-} = require('../controllers/resourceController');
-const { protect } = require('../middleware/authMiddleware');
-const upload = require('../middleware/upload');
-
 const router = express.Router();
+const resourceController = require('../controllers/resourceController');
+const { protect, authorize } = require('../middleware/authMiddleware');
+const fileUpload = require('../middleware/fileUpload');
 
 // Apply auth middleware to all routes
 router.use(protect);
+// Only allow students and lecturers (not admins) to access resources
+router.use((req, res, next) => {
+  if (req.user && (req.user.role === 'student' || req.user.role === 'lecturer')) {
+    next();
+  } else {
+    res.status(403).json({
+      success: false,
+      message: 'Access denied. Only students and lecturers can access resources.'
+    });
+  }
+});
 
-// Upload new resource (requires file upload)
-router.post('/', upload.single('file'), uploadResource);
+// Routes for both students and lecturers
+router.get('/search', resourceController.searchResources);
+router.get('/:id', resourceController.getResourceDetail);
+router.get('/:id/download', resourceController.downloadResource);
 
-// Get all resources with optional filtering
-router.get('/', getAllResources);
+// Routes for lecturers only
+router.post(
+  '/',
+  authorize('lecturer'),
+  fileUpload.uploadFile('resource'),
+  resourceController.uploadResource
+);
 
-// Get resources by category
-router.get('/category/:category', getResourcesByCategory);
+// Route for students (with special processing for student uploads)
+router.post(
+  '/student-upload',
+  authorize('student'),
+  fileUpload.uploadFile('resource'),
+  resourceController.studentUploadResource
+);
 
-// Search resources
-router.get('/search', searchResources);
-
-// Download resource
-router.get('/:id/download', downloadResource);
-
-// Get specific resource
-router.get('/:id', getResourceById);
-
-// Update resource details (not the file)
-router.put('/:id', updateResource);
-
-// Delete resource
-router.delete('/:id', deleteResource);
+// Routes for saving and rating resources
+router.post('/:id/save', resourceController.saveResource);
+router.post('/:id/rate', resourceController.rateResource);
+router.post('/:id/share', resourceController.shareResource);
 
 module.exports = router;

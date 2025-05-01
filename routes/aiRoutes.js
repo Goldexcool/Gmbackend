@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const aiController = require('../controllers/aiController');
+const aiService = require('../services/aiService');
 const { protect: authenticate, authorize } = require('../middleware/authMiddleware');
 
 // Apply authentication middleware
@@ -46,5 +47,8 @@ router.post('/summarize-text', aiController.summarizeText);
 // Add these new routes for conversation features
 router.post('/conversation/start', aiController.startConversation);
 router.post('/chat', aiController.quickChat);
+
+// Add new route for AI service
+router.use('/ask', aiService);
 
 module.exports = router;

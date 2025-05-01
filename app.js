@@ -8,6 +8,9 @@ const postRoutes = require('./routes/postRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const lecturerRoutes = require('./routes/lecturerRoutes');
+const connectionRoutes = require('./routes/connectionRoutes');
+const studyGroupRoutes = require('./routes/studyGroupRoutes');
+const resourceLibraryRoutes = require('./routes/resourceLibraryRoutes');
 const errorHandler = require('./middleware/errorHandler');
 require('dotenv').config();
 
@@ -25,6 +28,9 @@ app.use('/api/posts', postRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/lecturers', lecturerRoutes);
+app.use('/api/connections', connectionRoutes);
+app.use('/api/study-groups', studyGroupRoutes);
+app.use('/api/resources/library', resourceLibraryRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

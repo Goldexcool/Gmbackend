@@ -1,19 +1,25 @@
 const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
 
-const FAQSchema = new mongoose.Schema({
+const faqSchema = new Schema({
   question: {
     type: String,
-    required: [true, 'Please provide a question'],
+    required: true,
     trim: true
   },
   answer: {
     type: String,
-    required: [true, 'Please provide an answer']
+    required: true
   },
   category: {
     type: String,
-    default: 'general',
-    enum: ['general', 'academic', 'technical', 'financial', 'other']
+    enum: ['general', 'academic', 'technical', 'policy', 'other'],
+    default: 'general'
+  },
+  audience: {
+    type: [String],
+    enum: ['student', 'lecturer', 'admin', 'all'],
+    default: ['all']
   },
   order: {
     type: Number,
@@ -24,12 +30,17 @@ const FAQSchema = new mongoose.Schema({
     default: true
   },
   createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    type: Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, {
   timestamps: true
 });
 
-module.exports = mongoose.model('FAQ', mongoose.model.FAQ || FAQSchema);
+// Create index for faster lookups
+faqSchema.index({ category: 1, order: 1 });
+faqSchema.index({ audience: 1 });
+faqSchema.index({ isActive: 1 });
+
+const FAQ = mongoose.model('FAQ', faqSchema);
+module.exports = FAQ;

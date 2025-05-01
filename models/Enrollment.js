@@ -13,8 +13,8 @@ const EnrollmentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'completed', 'withdrawn', 'suspended'],
-    default: 'active'
+    enum: ['pending', 'accepted', 'rejected', 'canceled'], // These are the valid values
+    default: 'pending'
   },
   grade: {
     type: String,

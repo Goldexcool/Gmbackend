@@ -51,6 +51,22 @@ const errorHandler = (err, req, res, next) => {
     message = 'AI service temporarily unavailable';
   }
 
+  // Handle 404 errors
+  if (err.status === 404) {
+    res.status(404).json({
+      success: false,
+      message: err.message || 'Resource not found',
+      availableEndpoints: {
+        '/api/conversations': ['GET', 'POST'],
+        '/api/conversations/:id': ['GET', 'PUT', 'DELETE'],
+        '/api/conversations/:id/title': ['PUT'],
+        '/api/conversations/:id/rename': ['PUT'],
+        '/api/conversations/:id/messages': ['POST']
+      }
+    });
+    return;
+  }
+
   const response = {
     success: false,
     message,

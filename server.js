@@ -18,6 +18,7 @@ const Announcement = require('./models/Announcement');
 const FAQ = require('./models/FAQ');  
 const Settings = require('./models/Settings');
 const AcademicSession = require('./models/AcademicSession');
+const ExamTimetable = require('./models/ExamTimetable');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -30,6 +31,10 @@ const chatRoutes = require('./routes/chatRoutes');
 const courseRoutes = require('./routes/courseRoutes');
 const userRoutes = require('./routes/userRoutes');
 const conversationRoutes = require('./routes/conversationRoutes');
+const timetableRoutes = require('./routes/timetableRoutes');
+const academicSessionRoutes = require('./routes/academicSessionRoutes');
+const assignmentRoutes = require('./routes/assignmentRoutes');
+const taskRoutes = require('./routes/taskRoutes');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -55,17 +60,29 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Log route types
+console.log("Type of authRoutes:", typeof authRoutes);
+console.log("Type of userRoutes:", typeof userRoutes);
+console.log("Type of adminRoutes:", typeof adminRoutes);
+console.log("Type of lecturerRoutes:", typeof lecturerRoutes);
+console.log("Type of studentRoutes:", typeof studentRoutes);
+// ... and so on for each route
+
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/students', studentRoutes);
-app.use('/api/lecturers', lecturerRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/lecturer', lecturerRoutes);
+app.use('/api/student', studentRoutes);
+app.use('/api/conversations', conversationRoutes);
+app.use('/api/timetables', timetableRoutes);
+app.use('/api/academic-sessions', academicSessionRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/courses', courseRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/conversations', conversationRoutes);
+app.use('/api/assignments', assignmentRoutes);
+app.use('/api/tasks', taskRoutes);
 
 // Root route
 app.get('/', (req, res) => {

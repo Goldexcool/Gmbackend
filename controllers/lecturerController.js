@@ -3,12 +3,62 @@ const Lecturer = require('../models/Lecturer');
 const Course = require('../models/Course');
 const Student = require('../models/Student');
 const User = require('../models/User');
-const Schedule = require('../models/Schedule');
-const Task = require('../models/Task');
-const Chat = require('../models/Chat');
-const FAQ = require('../models/FAQ');
-const { bucket } = require('../config/firebase');
+const path = require('path');
+const fs = require('fs');
 
+// Optional imports with fallbacks
+let Schedule, Task, Chat, FAQ, Department, bucket;
+
+// Import Department model with fallback
+try {
+  Department = require('../models/Department');
+} catch (error) {
+  console.warn('Department model not found:', error.message);
+  // Create a stub model to prevent crashes
+  Department = { findById: () => Promise.resolve(null) };
+}
+
+// Import other optional models with fallbacks
+try {
+  Schedule = require('../models/Schedule');
+} catch (error) {
+  console.warn('Schedule model not found:', error.message);
+  Schedule = { findOneAndUpdate: () => Promise.resolve(null) };
+}
+
+try {
+  Task = require('../models/Task');
+} catch (error) {
+  console.warn('Task model not found:', error.message);
+  Task = { create: () => Promise.resolve(null), findById: () => Promise.resolve(null) };
+}
+
+try {
+  Chat = require('../models/Chat');
+} catch (error) {
+  console.warn('Chat model not found:', error.message);
+  Chat = { findOne: () => Promise.resolve(null), create: () => Promise.resolve(null) };
+}
+
+try {
+  FAQ = require('../models/FAQ');
+} catch (error) {
+  console.warn('FAQ model not found:', error.message);
+  FAQ = { find: () => Promise.resolve([]) };
+}
+
+// Import Firebase with fallback
+try {
+  const firebase = require('../config/firebase');
+  bucket = firebase.bucket;
+} catch (error) {
+  console.warn('Firebase config not found:', error.message);
+  // Create dummy bucket to prevent crashes
+  bucket = {
+    upload: () => Promise.resolve({ publicUrl: () => "" }),
+    file: () => ({ delete: () => Promise.resolve() })
+  };
+}
 
 exports.setSchedule = async (req, res) => {
   try {
@@ -60,7 +110,6 @@ exports.setSchedule = async (req, res) => {
   }
 };
 
-
 exports.createTask = async (req, res) => {
   try {
     const { id } = req.params;
@@ -104,7 +153,6 @@ exports.createTask = async (req, res) => {
     });
   }
 };
-
 
 exports.updateTask = async (req, res) => {
   try {
@@ -553,6 +601,242 @@ exports.getDepartmentDetails = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Update lecturer profile
+ * @route   PUT /api/lecturer/profile
+ * @access  Private/Lecturer
+ */
+exports.updateLecturerProfile = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      phoneNumber,
+      department,
+      staffId,
+      title,
+      specialization,
+      bio,
+      research,
+      officeHours,
+      officeLocation,
+      website,
+      socialLinks
+    } = req.body;
+
+    // Find lecturer profile by user ID
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+
+    if (!lecturer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lecturer profile not found'
+      });
+    }
+
+    // Get the associated user record to update basic info
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update user name if provided
+    if (firstName || lastName) {
+      if (firstName) user.firstName = firstName;
+      if (lastName) user.lastName = lastName;
+      
+      // Update the full name field
+      user.name = `${firstName || user.firstName} ${lastName || user.lastName}`;
+      
+      await user.save();
+    }
+
+    // Update lecturer profile fields if provided
+    if (phoneNumber !== undefined) lecturer.phoneNumber = phoneNumber;
+    if (title !== undefined) lecturer.title = title;
+    if (specialization !== undefined) lecturer.specialization = specialization;
+    if (bio !== undefined) lecturer.bio = bio;
+    if (research !== undefined) lecturer.research = research;
+    if (officeHours !== undefined) lecturer.officeHours = officeHours;
+    if (officeLocation !== undefined) lecturer.officeLocation = officeLocation;
+    if (website !== undefined) lecturer.website = website;
+    
+    // Update social links if provided
+    if (socialLinks) {
+      lecturer.socialLinks = {
+        ...lecturer.socialLinks || {},
+        ...socialLinks
+      };
+    }
+
+    // Special handling for department and staffId changes - might require approval
+    const updatesRequiringApproval = {};
+    let requiresApproval = false;
+
+    if (department && department !== lecturer.department) {
+      updatesRequiringApproval.department = department;
+      requiresApproval = true;
+    }
+
+    if (staffId && staffId !== lecturer.staffId) {
+      updatesRequiringApproval.staffId = staffId;
+      requiresApproval = true;
+    }
+
+    // If updates require approval, store them separately
+    if (requiresApproval) {
+      lecturer.pendingUpdates = {
+        ...lecturer.pendingUpdates || {},
+        ...updatesRequiringApproval,
+        requestedAt: new Date(),
+        status: 'pending'
+      };
+    } else {
+      // If no approval needed, apply updates directly
+      if (department) lecturer.department = department;
+      if (staffId) lecturer.staffId = staffId;
+    }
+
+    // Handle profile picture upload if included
+    if (req.file) {
+      // Delete old profile picture if exists
+      if (lecturer.profilePicture && lecturer.profilePicture.fileUrl) {
+        const oldFilePath = path.join(__dirname, '..', lecturer.profilePicture.fileUrl);
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      }
+
+      lecturer.profilePicture = {
+        filename: req.file.originalname,
+        fileUrl: `/uploads/profiles/${req.file.filename}`,
+        mimeType: req.file.mimetype,
+        size: req.file.size
+      };
+    }
+
+    // Save updated lecturer profile
+    await lecturer.save();
+
+    // Return updated profile with populated fields
+    const updatedLecturer = await Lecturer.findById(lecturer._id)
+      .populate('user', 'name email')
+      .populate('department', 'name code');
+
+    res.status(200).json({
+      success: true,
+      message: requiresApproval 
+        ? 'Profile updated. Some changes require approval and are pending review.' 
+        : 'Profile updated successfully',
+      data: updatedLecturer,
+      pendingChanges: requiresApproval ? updatesRequiringApproval : null
+    });
+  } catch (error) {
+    console.error('Error updating lecturer profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating lecturer profile',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get lecturer's assignment
+ * @route   GET /api/lecturer/assignments/:id
+ * @access  Private/Lecturer
+ */
+exports.getLecturerAssignment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find lecturer profile
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    if (!lecturer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lecturer profile not found'
+      });
+    }
+    
+    // Find assignment
+    const Assignment = require('../models/Assignment');
+    const assignment = await Assignment.findOne({
+      _id: id,
+      lecturer: lecturer._id
+    })
+    .populate('course', 'code title department level')
+    .populate('academicSession', 'name year');
+    
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Assignment not found or you do not have permission to view it'
+      });
+    }
+    
+    // Get submission statistics
+    const submissionCount = assignment.submissions.length;
+    const gradedCount = assignment.submissions.filter(sub => sub.status === 'graded').length;
+    
+    // Get list of students who haven't submitted yet
+    const Student = require('../models/Student');
+    const enrolledStudents = await Student.find({
+      courses: assignment.course._id
+    })
+    .populate('user', 'name email');
+    
+    const submittedStudentIds = assignment.submissions.map(sub => sub.student.toString());
+    const nonSubmitters = enrolledStudents.filter(student => 
+      !submittedStudentIds.includes(student._id.toString())
+    ).map(student => ({
+      _id: student._id,
+      name: student.user.name,
+      email: student.user.email,
+      matricNumber: student.matricNumber
+    }));
+    
+    // Include submission details with student info
+    const populatedSubmissions = await Promise.all(assignment.submissions.map(async (sub) => {
+      const student = await Student.findById(sub.student).populate('user', 'name email');
+      return {
+        ...sub.toObject(),
+        studentName: student?.user?.name || 'Unknown',
+        studentEmail: student?.user?.email || 'Unknown',
+        matricNumber: student?.matricNumber || 'Unknown'
+      };
+    }));
+    
+    // Create response with detailed information
+    const assignmentDetails = {
+      ...assignment.toObject(),
+      submissions: populatedSubmissions,
+      stats: {
+        totalEnrolled: enrolledStudents.length,
+        totalSubmitted: submissionCount,
+        totalGraded: gradedCount,
+        submissionRate: enrolledStudents.length ? (submissionCount / enrolledStudents.length) * 100 : 0
+      },
+      nonSubmitters
+    };
+    
+    res.status(200).json({
+      success: true,
+      data: assignmentDetails
+    });
+  } catch (error) {
+    console.error('Error getting lecturer assignment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting lecturer assignment',
       error: error.message
     });
   }

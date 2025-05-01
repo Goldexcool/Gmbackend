@@ -1,15 +1,16 @@
 // models/Schedule.js
 const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
 
-const ScheduleSchema = new mongoose.Schema({
+const scheduleSchema = new Schema({
   course: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: Schema.Types.ObjectId,
     ref: 'Course',
     required: true
   },
   lecturer: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', // Make sure this refers to User, not Lecturer
+    type: Schema.Types.ObjectId,
+    ref: 'User',
     required: true
   },
   date: {
@@ -24,12 +25,40 @@ const ScheduleSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  isRecurring: {
+    type: Boolean,
+    default: false
+  },
+  recurrencePattern: {
+    type: String,
+    enum: ['daily', 'weekly', 'biweekly', 'monthly', 'none'],
+    default: 'none'
+  },
+  academicSession: {
+    type: Schema.Types.ObjectId,
+    ref: 'AcademicSession'
+  },
+  status: {
+    type: String,
+    enum: ['scheduled', 'canceled', 'rescheduled', 'completed'],
+    default: 'scheduled'
+  },
+  notes: {
+    type: String
+  },
   createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: Schema.Types.ObjectId,
     ref: 'User'
   }
 }, {
   timestamps: true
 });
 
-module.exports = mongoose.model('Schedule', ScheduleSchema);
+// Create indexes for efficient queries
+scheduleSchema.index({ course: 1, date: 1 });
+scheduleSchema.index({ lecturer: 1, date: 1 });
+scheduleSchema.index({ academicSession: 1 });
+scheduleSchema.index({ date: 1, status: 1 });
+
+const Schedule = mongoose.model('Schedule', scheduleSchema);
+module.exports = Schedule;

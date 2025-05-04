@@ -110,100 +110,388 @@ exports.setSchedule = async (req, res) => {
   }
 };
 
-exports.createTask = async (req, res) => {
+/**
+ * @desc    Get all tasks for lecturer
+ * @route   GET /api/lecturer/tasks
+ * @access  Private/Lecturer
+ */
+exports.getTasks = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { name, dueDate, priority, description } = req.body;
+    const { courseId, status } = req.query;
     
-    // Validate lecturer ID
-    if (id !== req.user.id) {
-      return res.status(403).json({
+    // Get the lecturer profile
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    if (!lecturer) {
+      return res.status(404).json({
         success: false,
-        message: 'Not authorized to create tasks for this user'
+        message: 'Lecturer profile not found'
       });
     }
-
-    // Validate input
-    if (!name || !dueDate) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide name and due date'
-      });
+    
+    // Build the query
+    const query = {
+      $or: [
+        { createdBy: req.user.id },
+        { assignedTo: { $in: lecturer.courses } }
+      ]
+    };
+    
+    // Add filters if provided
+    if (courseId) {
+      query.course = courseId;
     }
-
-    // Create task
-    const task = await Task.create({
-      user: id,
-      name,
-      dueDate,
-      priority: priority || 'medium',
-      description,
-      status: 'pending'
-    });
-
-    res.status(201).json({
+    
+    if (status) {
+      query.status = status;
+    }
+    
+    // Get all tasks
+    const tasks = await Task.find(query)
+      .populate('course', 'code title')
+      .populate('createdBy', 'fullName email profilePicture')
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({
       success: true,
-      data: task
+      count: tasks.length,
+      data: tasks
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error getting tasks:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Error getting tasks',
+      error: error.message
     });
   }
 };
 
-exports.updateTask = async (req, res) => {
+/**
+ * @desc    Get task details
+ * @route   GET /api/lecturer/tasks/:id
+ * @access  Private/Lecturer
+ */
+exports.getTaskDetails = async (req, res) => {
   try {
-    const { id, taskId } = req.params;
-    const { status, name, dueDate, priority, description } = req.body;
+    const { id } = req.params;
     
-    // Validate lecturer ID
-    if (id !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to update this task'
+    // Get the task with all related data
+    const task = await Task.findById(id)
+      .populate('course', 'code title')
+      .populate('createdBy', 'fullName email profilePicture')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'user',
+          select: 'fullName email profilePicture role'
+        }
       });
-    }
-
-    // Find task
-    let task = await Task.findById(taskId);
     
-    // Check if task exists
     if (!task) {
       return res.status(404).json({
         success: false,
         message: 'Task not found'
       });
     }
-
-    // Check task ownership
-    if (task.user.toString() !== id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to update this task'
-      });
-    }
-
-    // Update task fields
-    if (status) task.status = status;
-    if (name) task.name = name;
-    if (dueDate) task.dueDate = dueDate;
-    if (priority) task.priority = priority;
-    if (description) task.description = description;
-
-    await task.save();
-
+    
     res.status(200).json({
       success: true,
       data: task
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error getting task details:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Error getting task details',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Create a new task
+ * @route   POST /api/lecturer/tasks
+ * @access  Private/Lecturer
+ */
+exports.createTask = async (req, res) => {
+  try {
+    const { 
+      title, 
+      description, 
+      courseId, 
+      dueDate, 
+      priority = 'medium',
+      status = 'open',
+      visibleToStudents = true
+    } = req.body;
+    
+    // Validate required fields
+    if (!title || !courseId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide title and course'
+      });
+    }
+    
+    // Get lecturer profile
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    if (!lecturer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lecturer profile not found'
+      });
+    }
+    
+    // Verify that this lecturer teaches this course
+    const lecturerCourses = lecturer.courses.map(id => id.toString());
+    if (!lecturerCourses.includes(courseId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only create tasks for courses you teach'
+      });
+    }
+    
+    // Process uploaded files
+    const files = req.files || [];
+    const attachments = files.map(file => ({
+      filename: file.filename,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      path: file.path
+    }));
+    
+    // Get all students enrolled in this course
+    const enrolledStudents = await Student.find({ courses: courseId });
+    const studentIds = enrolledStudents.map(student => student._id);
+    
+    // Create the task
+    const task = await Task.create({
+      title,
+      description,
+      course: courseId,
+      dueDate: dueDate ? new Date(dueDate) : undefined,
+      priority,
+      status,
+      attachments,
+      createdBy: req.user.id,
+      visibleToStudents,
+      assignedTo: studentIds
+    });
+    
+    // Add task to course
+    await Course.findByIdAndUpdate(
+      courseId,
+      { $push: { tasks: task._id } }
+    );
+    
+    // If visible to students, create notifications
+    if (visibleToStudents) {
+      // Get course details
+      const course = await Course.findById(courseId);
+      
+      // Get all students enrolled in this course
+      const enrolledStudents = await Student.find({ courses: courseId });
+      
+      // Create notifications
+      const notifications = enrolledStudents.map(student => ({
+        recipient: student.user,
+        type: 'task',
+        message: `New task "${title}" posted in ${course ? course.code : 'your course'}`,
+        referenceId: task._id,
+        referenceModel: 'Task'
+      }));
+      
+      if (notifications.length > 0) {
+        await Notification.insertMany(notifications);
+      }
+    }
+    
+    // Return the created task
+    const populatedTask = await Task.findById(task._id)
+      .populate('course', 'code title')
+      .populate('createdBy', 'fullName email profilePicture');
+    
+    res.status(201).json({
+      success: true,
+      data: populatedTask
+    });
+  } catch (error) {
+    console.error('Error creating task:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating task',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Update a task
+ * @route   PUT /api/lecturer/tasks/:id
+ * @access  Private/Lecturer
+ */
+exports.updateTask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      title, 
+      description, 
+      dueDate, 
+      priority,
+      status,
+      visibleToStudents,
+      removeAttachments = []
+    } = req.body;
+    
+    // Find the task
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found'
+      });
+    }
+    
+    // Check authorization - only creator or course lecturer can update
+    if (task.createdBy.toString() !== req.user.id) {
+      const lecturer = await Lecturer.findOne({ user: req.user.id });
+      if (!lecturer) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update this task'
+        });
+      }
+      
+      const lecturerCourses = lecturer.courses.map(id => id.toString());
+      if (!lecturerCourses.includes(task.course.toString())) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update this task'
+        });
+      }
+    }
+    
+    // Process uploaded files
+    const files = req.files || [];
+    const newAttachments = files.map(file => ({
+      filename: file.filename,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      path: file.path
+    }));
+    
+    // Filter out attachments that should be removed
+    let existingAttachments = task.attachments || [];
+    if (removeAttachments && removeAttachments.length > 0) {
+      existingAttachments = existingAttachments.filter(
+        attachment => !removeAttachments.includes(attachment.filename)
+      );
+    }
+    
+    // Build update object
+    const updateData = {
+      title: title || task.title,
+      description: description || task.description,
+      dueDate: dueDate ? new Date(dueDate) : task.dueDate,
+      priority: priority || task.priority,
+      status: status || task.status,
+      attachments: [...existingAttachments, ...newAttachments],
+      visibleToStudents: visibleToStudents !== undefined ? visibleToStudents : task.visibleToStudents,
+      updatedAt: Date.now()
+    };
+    
+    // Update the task
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true }
+    ).populate('course', 'code title')
+     .populate('createdBy', 'fullName email profilePicture');
+    
+    // Create notifications for status changes
+    if (status && status !== task.status) {
+      // Get course details
+      const course = await Course.findById(task.course);
+      
+      // If status changed to 'completed', notify students
+      if (status === 'completed' && task.visibleToStudents) {
+        const enrolledStudents = await Student.find({ courses: task.course });
+        
+        const notifications = enrolledStudents.map(student => ({
+          recipient: student.user,
+          type: 'task_update',
+          message: `Task "${task.title}" in ${course ? course.code : 'your course'} has been completed`,
+          referenceId: task._id,
+          referenceModel: 'Task'
+        }));
+        
+        if (notifications.length > 0) {
+          await Notification.insertMany(notifications);
+        }
+      }
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: updatedTask
+    });
+  } catch (error) {
+    console.error('Error updating task:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating task',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Delete a task
+ * @route   DELETE /api/lecturer/tasks/:id
+ * @access  Private/Lecturer
+ */
+exports.deleteTask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find the task
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found'
+      });
+    }
+    
+    // Check authorization - only creator can delete
+    if (task.createdBy.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this task'
+      });
+    }
+    
+    // Remove task from course
+    await Course.findByIdAndUpdate(
+      task.course,
+      { $pull: { tasks: task._id } }
+    );
+    
+    // Delete task
+    await Task.findByIdAndDelete(id);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Task deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting task:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting task',
+      error: error.message
     });
   }
 };

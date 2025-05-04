@@ -10,14 +10,18 @@ router.get('/public', courseController.getPublicCourses);
 // Protected routes (authentication needed)
 router.use(protect);
 
+// More specific routes first
+router.get('/enrolled', protect, courseController.getEnrolledCourses); // This must come BEFORE the /:id route
+router.get('/available', protect, courseController.getAvailableCourses);
+
 // Routes accessible to all authenticated users
-router.get('/', courseController.getAllCourses);
 router.get('/:id', courseController.getCourseById);
+router.get('/', courseController.getAllCourses);
 router.get('/:id/resources', courseController.getCourseResources);
 
 // Admin only routes
 router.use(authorize('admin'));
-router.post('/', courseController.createCourse);
+router.post('/', protect, authorize('admin'), courseController.createCourse);
 router.put('/:id', courseController.updateCourse);
 router.delete('/:id', courseController.deleteCourse);
 

@@ -15,18 +15,7 @@ const resourceSchema = new Schema({
   category: {
     type: String,
     required: [true, 'Please specify a category'],
-    enum: [
-      'lecture_notes', 
-      'slides', 
-      'textbook', 
-      'article', 
-      'practice_material', 
-      'past_papers',
-      'tutorial', 
-      'video', 
-      'audio', 
-      'other'
-    ]
+    enum: ['lecture', 'assignment', 'tutorial', 'reference', 'other', "lecture notes", "past questions", "course outline", "course material", "project", "research paper", "presentation", "video", "audio"],
   },
   course: {
     type: Schema.Types.ObjectId,
@@ -34,7 +23,7 @@ const resourceSchema = new Schema({
   },
   visibility: {
     type: String,
-    enum: ['public', 'course', 'department', 'private'],
+    enum: ['public', 'course', 'department', 'private', ],
     default: 'public'
   },
   files: [{

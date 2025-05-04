@@ -14,6 +14,7 @@ const Settings = require('../models/Settings');
 const ExamTimetable = require('../models/ExamTimetable');
 const bcrypt = require('bcryptjs');
 const SystemActivity = require('../models/SystemActivity')
+// const mongoose = require('mongoose');
 
 
 /**
@@ -963,7 +964,7 @@ exports.createUser = async (req, res) => {
       password,
       role,
       phoneNumber,
-      departmentId,
+      department, // Changed from departmentId to department for flexibility
       matricNumber,
       staffId,
       level,
@@ -1002,20 +1003,39 @@ exports.createUser = async (req, res) => {
       });
     }
     
-    if ((role === 'student' || role === 'lecturer') && !departmentId) {
+    if ((role === 'student' || role === 'lecturer') && !department) {
       return res.status(400).json({
         success: false,
-        message: 'Department ID is required for students and lecturers'
+        message: 'Department is required for students and lecturers'
       });
     }
     
-    // Check if department exists for student/lecturer
-    if (departmentId) {
-      const department = await Department.findById(departmentId);
-      if (!department) {
+    // Resolve department ID from name or ID
+    let departmentId = department;
+
+    // If department is a string but not a valid ObjectId, try to find by name
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      console.log(`Looking up department by name: ${department}`);
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+
+      if (!departmentDoc) {
         return res.status(404).json({
           success: false,
-          message: 'Department not found'
+          message: `Department "${department}" not found. Please check the department name.`
+        });
+      }
+
+      console.log(`Found department: ${departmentDoc.name} with ID: ${departmentDoc._id}`);
+      departmentId = departmentDoc._id;
+    } else if (department) {
+      // If it's already an ObjectId, verify it exists
+      const departmentExists = await Department.findById(departmentId);
+      if (!departmentExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Department not found with the provided ID'
         });
       }
     }
@@ -1083,12 +1103,19 @@ exports.createUser = async (req, res) => {
     // Return user without password
     const newUser = await User.findById(user[0]._id).select('-password');
     
+    // Get department name for response
+    let departmentDetails = null;
+    if (departmentId) {
+      departmentDetails = await Department.findById(departmentId).select('name code');
+    }
+    
     res.status(201).json({
       success: true,
       message: 'User created successfully',
       data: {
         user: newUser,
-        roleData
+        roleData,
+        department: departmentDetails
       }
     });
   } catch (error) {
@@ -1109,176 +1136,179 @@ exports.createUser = async (req, res) => {
  * @route   POST /api/admin/users/bulk
  * @access  Private/Admin
  */
-exports.createUsersBulk = async (req, res) => {
+exports.createUser = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   
   try {
-    const { users } = req.body;
+    const {
+      fullName,
+      email,
+      password,
+      role,
+      phoneNumber,
+      department, // Changed from departmentId to department for flexibility
+      matricNumber,
+      staffId,
+      level,
+      specialization
+    } = req.body;
     
-    if (!users || !Array.isArray(users) || users.length === 0) {
+    // Validate required fields
+    if (!fullName || !email || !password || !role) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide an array of users'
+        message: 'Please provide fullName, email, password and role'
       });
     }
     
-    const results = {
-      successful: [],
-      failed: []
-    };
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
     
-    // Process each user
-    for (const userData of users) {
-      try {
-        const {
-          fullName,
-          email,
-          password,
-          role,
-          phoneNumber,
-          departmentId,
-          matricNumber,
-          staffId,
-          level,
-          specialization
-        } = userData;
-        
-        // Validate required fields
-        if (!fullName || !email || !password || !role) {
-          results.failed.push({
-            user: userData,
-            error: 'Missing required fields (fullName, email, password, role)'
-          });
-          continue;
-        }
-        
-        // Check if user already exists
-        const existingUser = await User.findOne({ email }).session(session);
-        if (existingUser) {
-          results.failed.push({
-            user: userData,
-            error: 'User with this email already exists'
-          });
-          continue;
-        }
-        
-        // Validate role-specific fields
-        if (role === 'student') {
-          if (!matricNumber || !level || !departmentId) {
-            results.failed.push({
-              user: userData,
-              error: 'Student requires matricNumber, level, and departmentId'
-            });
-            continue;
-          }
-          
-          const existingStudent = await Student.findOne({ matricNumber }).session(session);
-          if (existingStudent) {
-            results.failed.push({
-              user: userData,
-              error: 'Student with this matric number already exists'
-            });
-            continue;
-          }
-        }
-        
-        if (role === 'lecturer') {
-          if (!staffId || !departmentId) {
-            results.failed.push({
-              user: userData,
-              error: 'Lecturer requires staffId and departmentId'
-            });
-            continue;
-          }
-          
-          const existingLecturer = await Lecturer.findOne({ staffId }).session(session);
-          if (existingLecturer) {
-            results.failed.push({
-              user: userData,
-              error: 'Lecturer with this staff ID already exists'
-            });
-            continue;
-          }
-        }
-        
-        // Check if department exists
-        if (departmentId) {
-          const department = await Department.findById(departmentId).session(session);
-          if (!department) {
-            results.failed.push({
-              user: userData,
-              error: 'Department not found'
-            });
-            continue;
-          }
-        }
-        
-        // Hash password
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        
-        // Create user
-        const user = await User.create([{
-          fullName,
-          email,
-          password: hashedPassword,
-          role,
-          phoneNumber: phoneNumber || '',
-          isActive: true
-        }], { session });
-        
-        // Create role-specific record
-        if (role === 'student') {
-          await Student.create([{
-            user: user[0]._id,
-            matricNumber,
-            department: departmentId,
-            level: parseInt(level),
-            currentSession: null,
-            courses: []
-          }], { session });
-        } else if (role === 'lecturer') {
-          await Lecturer.create([{
-            user: user[0]._id,
-            staffId,
-            department: departmentId,
-            specialization: specialization || '',
-            courses: []
-          }], { session });
-        }
-        
-        // Add to successful results
-        results.successful.push({
-          _id: user[0]._id,
-          fullName,
-          email,
-          role
-        });
-      } catch (error) {
-        results.failed.push({
-          user: userData,
-          error: error.message
+    // Validate additional fields for specific roles
+    if (role === 'student' && (!matricNumber || !level)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Student requires matricNumber and level'
+      });
+    }
+    
+    if (role === 'lecturer' && !staffId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Lecturer requires staffId'
+      });
+    }
+    
+    if ((role === 'student' || role === 'lecturer') && !department) {
+      return res.status(400).json({
+        success: false,
+        message: 'Department is required for students and lecturers'
+      });
+    }
+    
+    // Resolve department ID from name or ID
+    let departmentId = department;
+
+    // If department is a string but not a valid ObjectId, try to find by name
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      console.log(`Looking up department by name: ${department}`);
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+
+      if (!departmentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name.`
         });
       }
+
+      console.log(`Found department: ${departmentDoc.name} with ID: ${departmentDoc._id}`);
+      departmentId = departmentDoc._id;
+    } else if (department) {
+      // If it's already an ObjectId, verify it exists
+      const departmentExists = await Department.findById(departmentId);
+      if (!departmentExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Department not found with the provided ID'
+        });
+      }
+    }
+    
+    // Check if matric/staff ID already exists
+    if (role === 'student' && matricNumber) {
+      const existingStudent = await Student.findOne({ matricNumber });
+      if (existingStudent) {
+        return res.status(400).json({
+          success: false,
+          message: 'Student with this matric number already exists'
+        });
+      }
+    }
+    
+    if (role === 'lecturer' && staffId) {
+      const existingLecturer = await Lecturer.findOne({ staffId });
+      if (existingLecturer) {
+        return res.status(400).json({
+          success: false,
+          message: 'Lecturer with this staff ID already exists'
+        });
+      }
+    }
+    
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    // Create user
+    const user = await User.create([{
+      fullName,
+      email,
+      password: hashedPassword,
+      role,
+      phoneNumber: phoneNumber || '',
+      isActive: true
+    }], { session });
+    
+    // Create role-specific record
+    let roleData = null;
+    
+    if (role === 'student') {
+      roleData = await Student.create([{
+        user: user[0]._id,
+        matricNumber,
+        department: departmentId,
+        level: parseInt(level),
+        currentSession: null,
+        courses: []
+      }], { session });
+    } else if (role === 'lecturer') {
+      roleData = await Lecturer.create([{
+        user: user[0]._id,
+        staffId,
+        department: departmentId,
+        specialization: specialization || '',
+        courses: []
+      }], { session });
     }
     
     await session.commitTransaction();
     session.endSession();
     
-    res.status(200).json({
+    // Return user without password
+    const newUser = await User.findById(user[0]._id).select('-password');
+    
+    // Get department name for response
+    let departmentDetails = null;
+    if (departmentId) {
+      departmentDetails = await Department.findById(departmentId).select('name code');
+    }
+    
+    res.status(201).json({
       success: true,
-      message: `Created ${results.successful.length} users, failed ${results.failed.length}`,
-      data: results
+      message: 'User created successfully',
+      data: {
+        user: newUser,
+        roleData,
+        department: departmentDetails
+      }
     });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
     
-    console.error('Error creating bulk users:', error);
+    console.error('Error creating user:', error);
     res.status(500).json({
       success: false,
-      message: 'Error creating bulk users',
+      message: 'Error creating user',
       error: error.message
     });
   }
@@ -3643,126 +3673,161 @@ exports.getAllCourses = async (req, res) => {
  * @route   POST /api/admin/courses
  * @access  Private/Admin
  */
+/**
+ * @desc    Create a new course
+ * @route   POST /api/admin/courses
+ * @access  Private/Admin
+ */
+// @desc    Create a new course
+// @route   POST /api/admin/courses
+// @access  Private/Admin
+// @desc    Create a new course
+// @route   POST /api/admin/courses
+// @access  Private/Admin
 exports.createCourse = async (req, res) => {
   try {
-    const {
-      code,
-      title,
-      description,
-      department,
-      credits,
-      level,
+    const { 
+      title, 
+      code, 
+      description, 
+      department, 
+      level, 
+      credits, 
       semester,
-      isElective,
-      academicSession,
-      lecturer,
-      prerequisites
+      academicSession: academicSessionId,
+      isCompulsory = false,
+      lecturerId 
     } = req.body;
-    
+
+    console.log('Course creation request body:', req.body);
+
     // Validate required fields
-    if (!code || !title || !department || !level || !semester) {
+    if (!title || !code || !level) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide course code, title, department, level, and semester'
+        message: 'Please provide title, code, and level'
       });
     }
-    
-    // Check if course already exists with same code
-    const existingCourse = await Course.findOne({
-      code: { $regex: new RegExp(`^${code}$`, 'i') },
-      department
-    });
-    
+
+    // Check if department is missing or empty
+    if (!department) {
+      return res.status(400).json({
+        success: false,
+        message: 'Department is required'
+      });
+    }
+
+    // Check if course code already exists
+    const existingCourse = await Course.findOne({ code });
     if (existingCourse) {
       return res.status(400).json({
         success: false,
-        message: 'Course with this code already exists in this department'
+        message: 'Course with this code already exists'
       });
     }
+
+    // Find department by ID or name
+    let departmentId;
     
-    // Check if department exists
-    const departmentExists = await Department.findById(department);
-    if (!departmentExists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Department not found'
+    // If department is a string (not an ObjectId), try to find by name
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      console.log('Looking up department by name:', department);
+      
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
       });
-    }
-    
-    // Check if academic session exists if provided
-    if (academicSession) {
-      const sessionExists = await AcademicSession.findById(academicSession);
-      if (!sessionExists) {
+
+      if (!departmentDoc) {
         return res.status(404).json({
           success: false,
-          message: 'Academic session not found'
+          message: `Department "${department}" not found. Please check the department name.`
         });
       }
+
+      console.log('Found department:', departmentDoc.name, 'with ID:', departmentDoc._id);
+      departmentId = departmentDoc._id;
+    } else {
+      // If it's already an ObjectId or a string representation of one
+      departmentId = department;
     }
-    
-    // Check if lecturer exists if provided
-    if (lecturer) {
-      const lecturerExists = await Lecturer.findById(lecturer);
-      if (!lecturerExists) {
-        return res.status(404).json({
+
+    // Find active academic session if none provided
+    let academicSession = academicSessionId;
+    if (!academicSession) {
+      const activeSession = await AcademicSession.findOne({ isActive: true });
+      if (!activeSession) {
+        return res.status(400).json({
           success: false,
-          message: 'Lecturer not found'
+          message: 'No active academic session found. Please create one before adding courses.'
         });
       }
+      academicSession = activeSession._id;
     }
-    
-    // Validate prerequisites if provided
-    if (prerequisites && prerequisites.length > 0) {
-      const foundPrereqs = await Course.find({ _id: { $in: prerequisites } });
-      if (foundPrereqs.length !== prerequisites.length) {
-        return res.status(404).json({
-          success: false,
-          message: 'One or more prerequisite courses not found'
-        });
+
+    // Normalize semester value
+    let normalizedSemester = semester;
+    if (semester) {
+      const semValue = semester.toString().toLowerCase();
+      if (semValue === '1' || semValue === 'first') {
+        normalizedSemester = 'First';
+      } else if (semValue === '2' || semValue === 'second') {
+        normalizedSemester = 'Second';
       }
     }
-    
-    // Create course
-    const course = await Course.create({
-      code,
+
+    // Create course data object
+    const courseData = {
       title,
-      description: description || '',
-      department,
+      code,
+      description,
+      department: departmentId, // Use the found department ID
+      level,
       credits: credits || 3,
-      level: parseInt(level),
-      semester: parseInt(semester),
-      isElective: isElective || false,
+      semester: normalizedSemester || 'First',
       academicSession,
-      lecturer,
-      prerequisites: prerequisites || []
-    });
-    
-    // Add course to lecturer if provided
-    if (lecturer) {
-      await Lecturer.findByIdAndUpdate(
-        lecturer,
-        { $addToSet: { courses: course._id } }
-      );
+      isCompulsory: isCompulsory === true
+    };
+
+    // Only add lecturer if provided
+    if (lecturerId) {
+      if (Array.isArray(lecturerId)) {
+        courseData.lecturer = lecturerId;
+      } else {
+        courseData.lecturer = [lecturerId];
+      }
     }
-    
-    // Populate fields for response
-    await course.populate([
-      { path: 'department', select: 'name code' },
-      { path: 'academicSession', select: 'name year semester' },
-      {
-        path: 'lecturer',
-        populate: {
-          path: 'user',
-          select: 'fullName email'
-        }
-      },
-      { path: 'prerequisites', select: 'code title' }
-    ]);
-    
+
+    console.log('Creating course with data:', {
+      ...courseData,
+      department: departmentId.toString() // Convert ObjectId to string for logging
+    });
+
+    // Create the course
+    const course = await Course.create(courseData);
+
+    // If course is compulsory, auto-assign to matching students
+    if (isCompulsory) {
+      const students = await Student.find({ 
+        department: departmentId,
+        level
+      });
+      
+      for (const student of students) {
+        student.courses.push(course._id);
+        await student.save();
+      }
+      
+      console.log(`Auto-assigned course ${course._id} to ${students.length} students`);
+    }
+
+    // Populate the course to show department name in response
+    const populatedCourse = await Course.findById(course._id)
+      .populate('department', 'name code')
+      .populate('academicSession', 'name year');
+
     res.status(201).json({
       success: true,
-      message: 'Course created successfully',
-      data: course
+      data: populatedCourse
     });
   } catch (error) {
     console.error('Error creating course:', error);
@@ -3773,7 +3838,6 @@ exports.createCourse = async (req, res) => {
     });
   }
 };
-
 /**
  * @desc    Create multiple courses at once
  * @route   POST /api/admin/courses/bulk
@@ -3938,13 +4002,18 @@ exports.createCoursesBulk = async (req, res) => {
  * @route   PUT /api/admin/courses/:id
  * @access  Private/Admin
  */
+/**
+ * @desc    Update a course
+ * @route   PUT /api/admin/courses/:id
+ * @access  Private/Admin
+ */
 exports.updateCourse = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   
   try {
     const { id } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
     
     // Find course
     const course = await Course.findById(id);
@@ -3957,7 +4026,83 @@ exports.updateCourse = async (req, res) => {
       });
     }
     
-    // Your update logic here...
+    // Handle department if provided as a name instead of ID
+    if (updateData.department && typeof updateData.department === 'string' && 
+        !mongoose.Types.ObjectId.isValid(updateData.department)) {
+      
+      console.log(`Looking up department by name: ${updateData.department}`);
+      
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${updateData.department}$`, 'i') }
+      });
+
+      if (!departmentDoc) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({
+          success: false,
+          message: `Department "${updateData.department}" not found. Please check the department name.`
+        });
+      }
+
+      console.log(`Found department: ${departmentDoc.name} with ID: ${departmentDoc._id}`);
+      updateData.department = departmentDoc._id;
+    }
+    
+    // Handle semester normalization if provided
+    if (updateData.semester) {
+      const semValue = updateData.semester.toString().toLowerCase();
+      if (semValue === '1' || semValue === 'first') {
+        updateData.semester = 'First';
+      } else if (semValue === '2' || semValue === 'second') {
+        updateData.semester = 'Second';
+      }
+    }
+    
+    // Update lecturer assignments if lecturer is changing
+    if (updateData.lecturer && (!course.lecturer || 
+        updateData.lecturer.toString() !== course.lecturer.toString())) {
+      
+      // Remove course from old lecturer if exists
+      if (course.lecturer) {
+        await Lecturer.findByIdAndUpdate(
+          course.lecturer,
+          { $pull: { courses: id } },
+          { session }
+        );
+      }
+      
+      // Add course to new lecturer
+      await Lecturer.findByIdAndUpdate(
+        updateData.lecturer,
+        { $addToSet: { courses: id } },
+        { session }
+      );
+    }
+    
+    // If isCompulsory is changing from false to true, handle auto-enrollment
+    if (updateData.isCompulsory === true && !course.isCompulsory) {
+      const departmentId = updateData.department || course.department;
+      const level = updateData.level || course.level;
+      
+      const students = await Student.find({ 
+        department: departmentId,
+        level
+      });
+      
+      for (const student of students) {
+        // Only add if not already present
+        if (!student.courses.includes(id) && 
+            !student.courses.some(c => c.toString() === id.toString())) {
+          student.courses.push(id);
+          await student.save({ session });
+        }
+      }
+      
+      console.log(`Auto-assigned course ${id} to ${students.length} students`);
+    }
+    
+    // Find and update the course
     const updatedCourse = await Course.findByIdAndUpdate(
       id,
       updateData,
@@ -4005,8 +4150,13 @@ exports.deleteCourse = async (req, res) => {
     const { id } = req.params;
     
     // Find course
-    const course = await Course.findById(id);
+    const course = await Course.findById(id)
+      .populate('department', 'name')
+      .populate('academicSession', 'name');
+      
     if (!course) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({
         success: false,
         message: 'Course not found'
@@ -4016,11 +4166,15 @@ exports.deleteCourse = async (req, res) => {
     // Check if course has enrollments
     const enrollmentsCount = await Enrollment.countDocuments({ course: id });
     if (enrollmentsCount > 0) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         success: false,
         message: 'Cannot delete course with existing enrollments',
         data: {
-          enrollmentsCount
+          enrollmentsCount,
+          courseCode: course.code,
+          courseTitle: course.title
         }
       });
     }
@@ -4028,29 +4182,72 @@ exports.deleteCourse = async (req, res) => {
     // Check if course is a prerequisite for other courses
     const prerequiredForCount = await Course.countDocuments({ prerequisites: id });
     if (prerequiredForCount > 0) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         success: false,
         message: 'Cannot delete course that is a prerequisite for other courses',
         data: {
-          prerequiredForCount
+          prerequiredForCount,
+          courseInfo: {
+            code: course.code,
+            title: course.title
+          }
         }
       });
     }
     
+    // Remove course from student course lists
+    await Student.updateMany(
+      { courses: id },
+      { $pull: { courses: id } },
+      { session }
+    );
+    
     // Remove course from lecturer's courses if assigned
     if (course.lecturer) {
-      await Lecturer.findByIdAndUpdate(
-        course.lecturer,
-        { $pull: { courses: id } },
-        { session }
-      );
+      if (Array.isArray(course.lecturer)) {
+        // Handle multiple lecturers case
+        for (const lecturerId of course.lecturer) {
+          await Lecturer.findByIdAndUpdate(
+            lecturerId,
+            { $pull: { courses: id } },
+            { session }
+          );
+        }
+      } else {
+        // Handle single lecturer case
+        await Lecturer.findByIdAndUpdate(
+          course.lecturer,
+          { $pull: { courses: id } },
+          { session }
+        );
+      }
     }
     
-    // Delete course schedules
-    await Schedule.deleteMany({ course: id }, { session });
+    // Delete all related resources, assignments, etc.
+    await Promise.all([
+      // Delete course schedules
+      Schedule.deleteMany({ course: id }, { session }),
+      
+      // Delete resources tied to this course
+      Resource.deleteMany({ course: id }, { session }),
+      
+      // Delete assignments for this course
+      Assignment.deleteMany({ course: id }, { session }),
+    ]);
     
-    // Delete course
+    // Delete the course record
     await Course.findByIdAndDelete(id, { session });
+    
+    // Log this deletion
+    await SystemActivity.create([{
+      user: req.user.id,
+      action: 'COURSE_DELETE',
+      details: `Deleted course ${course.code} (${course.title})`,
+      affectedModel: 'Course',
+      affectedId: id
+    }], { session });
     
     await session.commitTransaction();
     session.endSession();
@@ -4058,10 +4255,17 @@ exports.deleteCourse = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Course deleted successfully',
-      data: { id }
+      data: { 
+        id,
+        code: course.code,
+        title: course.title,
+        department: course.department?.name || 'Unknown Department'
+      }
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     session.endSession();
     
     console.error('Error deleting course:', error);
@@ -6098,7 +6302,7 @@ exports.getEnrollments = async (req, res) => {
  */
 exports.forceEnrollStudent = async (req, res) => {
   try {
-    const { studentId, courseId, status = 'approved', notes } = req.body;
+    const { studentId, courseId, status = 'accepted', notes } = req.body;
     
     // Validate required fields
     if (!studentId || !courseId) {
@@ -6187,24 +6391,13 @@ exports.forceEnrollStudent = async (req, res) => {
       }
     ]);
     
-    // Log the activity
+    // Log the activity - FIXED: Convert object to string and add required fields
     await SystemActivity.create({
       user: req.user._id,
-      activity: 'force_enrollment',
-      description: `Force enrolled ${student.user?.fullName} in ${course.code}`,
-      details: {
-        student: {
-          id: student._id,
-          name: student.user?.fullName,
-          matricNumber: student.matricNumber
-        },
-        course: {
-          id: course._id,
-          code: course.code,
-          title: course.title
-        },
-        status
-      }
+      action: 'FORCE_ENROLLMENT', // Required field
+      details: `Force enrolled student ${student.matricNumber} (${student.user?.fullName}) in course ${course.code} (${course.title})`, // String instead of object
+      affectedModel: 'Enrollment', // Required field
+      affectedId: enrollment._id // Required field
     });
     
     res.status(201).json({
@@ -6553,7 +6746,7 @@ exports.updateEnrollmentStatus = async (req, res) => {
     const { status, notes } = req.body;
     
     // Validate status
-    const validStatuses = ['pending', 'approved', 'rejected'];
+    const validStatuses = ['pending', 'accepted', 'rejected', 'canceled'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -6600,16 +6793,13 @@ exports.updateEnrollmentStatus = async (req, res) => {
       }
     ]);
     
-    // Log the activity
+    // Log the activity - FIXED SystemActivity creation
     await SystemActivity.create({
       user: req.user._id,
-      activity: 'update_enrollment_status',
-      description: `Updated enrollment status to ${status} for ${enrollment.student.user?.fullName} in ${enrollment.course.code}`,
-      details: {
-        enrollmentId,
-        status,
-        notes
-      }
+      action: 'UPDATE_ENROLLMENT_STATUS', // Required field
+      details: `Updated enrollment status to ${status} for student in course ${enrollment.course.code}`, // Changed to string
+      affectedModel: 'Enrollment', // Required field
+      affectedId: enrollment._id // Required field
     });
     
     res.status(200).json({
@@ -6636,12 +6826,15 @@ exports.deleteEnrollment = async (req, res) => {
   try {
     const { enrollmentId } = req.params;
     
-    // Find enrollment
+    // Find enrollment to delete (getting the data before deleting it)
     const enrollment = await Enrollment.findById(enrollmentId)
+      .populate('student', 'matricNumber user')
       .populate({
         path: 'student',
-        select: 'matricNumber',
-        populate: { path: 'user', select: 'fullName' }
+        populate: {
+          path: 'user',
+          select: 'fullName'
+        }
       })
       .populate('course', 'code title');
     
@@ -6652,43 +6845,447 @@ exports.deleteEnrollment = async (req, res) => {
       });
     }
     
-    // Capture enrollment details for logging before deletion
-    const enrollmentDetails = {
-      id: enrollment._id,
-      student: {
-        id: enrollment.student._id,
-        name: enrollment.student.user?.fullName,
-        matricNumber: enrollment.student.matricNumber
-      },
-      course: {
-        id: enrollment.course._id,
-        code: enrollment.course.code,
-        title: enrollment.course.title
-      },
-      status: enrollment.status
-    };
-    
     // Delete enrollment
-    await enrollment.remove();
+    await Enrollment.findByIdAndDelete(enrollmentId);
     
-    // Log the activity
+    // Log the activity with proper values for all required fields
     await SystemActivity.create({
       user: req.user._id,
-      activity: 'delete_enrollment',
-      description: `Deleted enrollment for ${enrollmentDetails.student.name} in ${enrollmentDetails.course.code}`,
-      details: enrollmentDetails
+      action: 'DELETE_ENROLLMENT',  // Required field
+      details: `Admin deleted enrollment for student ${enrollment.student.matricNumber} in course ${enrollment.course.code}`, // Convert to string
+      affectedModel: 'Enrollment',  // Required field
+      affectedId: enrollment._id    // Required field
     });
     
     res.status(200).json({
       success: true,
       message: 'Enrollment deleted successfully',
-      data: { id: enrollmentId }
+      data: {
+        _id: enrollmentId
+      }
     });
   } catch (error) {
     console.error('Error deleting enrollment:', error);
     res.status(500).json({
       success: false,
       message: 'Error deleting enrollment',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Set course as compulsory/optional
+ * @route   PATCH /api/admin/courses/:courseId/compulsory
+ * @access  Private/Admin
+ */
+exports.setCourseCompulsory = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { isCompulsory, department } = req.body;
+    
+    if (typeof isCompulsory !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide isCompulsory as a boolean value'
+      });
+    }
+    
+    const course = await Course.findById(courseId);
+    
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
+    
+    // If department is provided as a string name, find the ID
+    let departmentId = course.department;
+    if (department && typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+
+      if (!departmentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name.`
+        });
+      }
+
+      departmentId = departmentDoc._id;
+      course.department = departmentId;
+    }
+    
+    // Ensure academicSession is set if missing
+    if (!course.academicSession) {
+      // Find active academic session
+      const activeSession = await AcademicSession.findOne({ isActive: true });
+      if (!activeSession) {
+        return res.status(400).json({
+          success: false,
+          message: 'No active academic session found. Please create one before updating courses.'
+        });
+      }
+      course.academicSession = activeSession._id;
+    }
+    
+    // Set the compulsory flag
+    course.isCompulsory = isCompulsory;
+    await course.save();
+    
+    // If course is marked as compulsory, auto-assign to matching students
+    if (isCompulsory) {
+      // Find matching students
+      const students = await Student.find({
+        department: departmentId,
+        level: course.level
+      });
+      
+      // Auto-assign course to each student
+      for (const student of students) {
+        // Check if student already has this course
+        if (!student.courses.includes(courseId) && 
+            !student.courses.some(c => c.toString() === courseId.toString())) {
+          student.courses.push(courseId);
+          await student.save();
+        }
+      }
+      
+      console.log(`Auto-assigned course ${courseId} to ${students.length} students`);
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: course,
+      message: `Course marked as ${isCompulsory ? 'compulsory' : 'optional'}`
+    });
+  } catch (error) {
+    console.error('Error setting course compulsory status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error setting course compulsory status',
+      error: error.message
+    });
+  }
+};
+/**
+ * @desc    Assign compulsory courses to matching students
+ * @route   POST /api/admin/courses/assign-compulsory
+ * @access  Private/Admin
+ */
+
+exports.assignCompulsoryCourses = async (req, res) => {
+  try {
+    // Find active academic session
+    const activeSession = await AcademicSession.findOne({ isActive: true });
+    
+    if (!activeSession) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active academic session found'
+      });
+    }
+    
+    // Find all compulsory courses
+    const compulsoryCourses = await Course.find({
+      isCompulsory: true,
+      isActive: true,
+      academicSession: activeSession._id
+    });
+    
+    if (compulsoryCourses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No compulsory courses found'
+      });
+    }
+    
+    // Group courses by department and level
+    const coursesByDeptLevel = {};
+    
+    compulsoryCourses.forEach(course => {
+      const key = `${course.department}-${course.level}`;
+      if (!coursesByDeptLevel[key]) {
+        coursesByDeptLevel[key] = [];
+      }
+      coursesByDeptLevel[key].push(course._id);
+    });
+    
+    // Process each department-level group
+    const results = [];
+    
+    for (const [deptLevel, courseIds] of Object.entries(coursesByDeptLevel)) {
+      const [department, level] = deptLevel.split('-');
+      
+      // Find students in this department and level
+      const students = await Student.find({ department, level });
+      
+      // Auto-assign courses to each student
+      let assignedCount = 0;
+      
+      for (const student of students) {
+        let studentAssigned = false;
+        
+        // Add missing courses
+        for (const courseId of courseIds) {
+          if (!student.courses.includes(courseId) && 
+              !student.courses.some(c => c.toString() === courseId.toString())) {
+            student.courses.push(courseId);
+            studentAssigned = true;
+          }
+        }
+        
+        // Save only if changes were made
+        if (studentAssigned) {
+          await student.save();
+          assignedCount++;
+        }
+      }
+      
+      // Get department name for better reporting
+      let departmentName = department;
+      try {
+        const departmentDoc = await Department.findById(department);
+        if (departmentDoc) {
+          departmentName = departmentDoc.name;
+        }
+      } catch (err) {
+        console.warn(`Could not get department name for ${department}`);
+      }
+      
+      results.push({
+        departmentId: department,
+        departmentName,
+        level,
+        totalStudents: students.length,
+        studentsAssigned: assignedCount,
+        coursesAssigned: courseIds.length
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Compulsory courses assigned successfully',
+      data: results
+    });
+  } catch (error) {
+    console.error('Error assigning compulsory courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error assigning compulsory courses',
+      error: error.message
+    });
+  }
+};
+// @desc    Assign compulsory courses to matching students
+// @route   POST /api/admin/courses/assign-compulsory
+// @access  Private/Admin
+exports.assignCompulsoryCourses = async (req, res) => {
+  try {
+    // Find active academic session
+    const activeSession = await AcademicSession.findOne({ isActive: true });
+    
+    if (!activeSession) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active academic session found'
+      });
+    }
+    
+    // Find all compulsory courses
+    const compulsoryCourses = await Course.find({
+      isCompulsory: true,
+      isActive: true,
+      academicSession: activeSession._id
+    });
+    
+    if (compulsoryCourses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No compulsory courses found'
+      });
+    }
+    
+    // Group courses by department and level
+    const coursesByDeptLevel = {};
+    
+    compulsoryCourses.forEach(course => {
+      const key = `${course.department}-${course.level}`;
+      if (!coursesByDeptLevel[key]) {
+        coursesByDeptLevel[key] = [];
+      }
+      coursesByDeptLevel[key].push(course._id);
+    });
+    
+    // Process each department-level group
+    const results = [];
+    
+    for (const [deptLevel, courseIds] of Object.entries(coursesByDeptLevel)) {
+      const [department, level] = deptLevel.split('-');
+      
+      // Find students in this department and level
+      const students = await Student.find({ department, level });
+      
+      // Auto-assign courses to each student
+      let assignedCount = 0;
+      
+      for (const student of students) {
+        let studentAssigned = false;
+        
+        // Add missing courses
+        for (const courseId of courseIds) {
+          if (!student.courses.includes(courseId) && 
+              !student.courses.some(c => c.toString() === courseId.toString())) {
+            student.courses.push(courseId);
+            studentAssigned = true;
+          }
+        }
+        
+        // Save only if changes were made
+        if (studentAssigned) {
+          await student.save();
+          assignedCount++;
+        }
+      }
+      
+      results.push({
+        department,
+        level,
+        totalStudents: students.length,
+        studentsAssigned: assignedCount,
+        coursesAssigned: courseIds.length
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Compulsory courses assigned successfully',
+      data: results
+    });
+  } catch (error) {
+    console.error('Error assigning compulsory courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error assigning compulsory courses',
+      error: error.message
+    });
+  }
+};
+// @desc    Create a new course
+// @route   POST /api/admin/courses
+// @access  Private/Admin
+exports.createCourse = async (req, res) => {
+  try {
+    const { 
+      title, 
+      code, 
+      description, 
+      department, 
+      level, 
+      credits, 
+      semester,
+      academicSessionId,
+      isCompulsory = false,
+      lecturerId 
+    } = req.body;
+
+    // Validate required fields
+    if (!title || !code || !department || !level) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields'
+      });
+    }
+
+    // Check if course code already exists
+    const existingCourse = await Course.findOne({ code });
+    if (existingCourse) {
+      return res.status(400).json({
+        success: false,
+        message: 'Course with this code already exists'
+      });
+    }
+
+    // Find department by ID or name
+    let departmentId = department;
+
+    // If department is a string but not a valid ObjectId, try to find by name
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+
+      if (!departmentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name.`
+        });
+      }
+
+      departmentId = departmentDoc._id;
+    }
+
+    // Find active academic session if none provided
+    let academicSession = academicSessionId;
+    if (!academicSession) {
+      const activeSession = await AcademicSession.findOne({ isActive: true });
+      if (!activeSession) {
+        return res.status(400).json({
+          success: false,
+          message: 'No active academic session found. Please create one before adding courses.'
+        });
+      }
+      academicSession = activeSession._id;
+    }
+
+    // Normalize semester value
+    let normalizedSemester = semester;
+    if (semester) {
+      const semValue = semester.toString().toLowerCase();
+      if (semValue === '1' || semValue === 'first') {
+        normalizedSemester = 'First';
+      } else if (semValue === '2' || semValue === 'second') {
+        normalizedSemester = 'Second';
+      }
+    }
+
+    // Create course
+    const course = await Course.create({
+      title,
+      code,
+      description,
+      department: departmentId,
+      level,
+      credits,
+      semester: normalizedSemester,
+      academicSession,
+      lecturer: lecturerId,
+      isCompulsory
+    });
+
+    // If course is compulsory, auto-assign to matching students
+    if (isCompulsory) {
+      const students = await Student.find({ department: departmentId, level });
+      
+      for (const student of students) {
+        student.courses.push(course._id);
+        await student.save();
+      }
+      
+      console.log(`Auto-assigned course ${course._id} to ${students.length} students`);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: course
+    });
+  } catch (error) {
+    console.error('Error creating course:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating course',
       error: error.message
     });
   }

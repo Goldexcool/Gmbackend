@@ -114,7 +114,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/tasks', taskRoutes);
-
+app.use('/api/lecturers', require('./routes/lecturerRoutes'));
 // Root route
 app.get('/', (req, res) => {
   res.send('GEM-SPACE API is running');

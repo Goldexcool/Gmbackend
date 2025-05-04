@@ -414,121 +414,18 @@ exports.deleteChat = async (req, res) => {
 
 exports.sendMessage = async (req, res) => {
   try {
-    const { content } = req.body;
-    const { chatId } = req.params;
+    const { repId } = req.params;
+    const { message } = req.body;
     
-    if (!content && (!req.files || req.files.length === 0)) {
+    // Validate message
+    if (!message || message.trim() === '') {
       return res.status(400).json({
         success: false,
-        message: 'Please provide message content or attachments'
+        message: 'Message text is required'
       });
     }
     
-    const chat = await Chat.findById(chatId);
-    
-    if (!chat) {
-      return res.status(404).json({
-        success: false,
-        message: 'Chat not found'
-      });
-    }
-    
-    // Check if user is a participant
-    if (!chat.participants.includes(req.user.id)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to send messages to this chat'
-      });
-    }
-    
-    let attachments = [];
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        let fileUrl = '';
-        let fileName = '';
-        
-        // If Firebase is available, upload to Firebase Storage
-        if (bucket && bucket.file) {
-          // Generate unique filename
-          fileName = `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
-          const filePath = file.path;
-          
-          // Upload to Firebase
-          try {
-            const blob = bucket.file(`chat-attachments/${fileName}`);
-            const blobStream = blob.createWriteStream({
-              metadata: {
-                contentType: file.mimetype
-              }
-            });
-            
-            await new Promise((resolve, reject) => {
-              blobStream.on('error', reject);
-              blobStream.on('finish', resolve);
-              fs.createReadStream(filePath).pipe(blobStream);
-            });
-            
-            // Make the file public
-            await blob.makePublic();
-            fileUrl = `https://storage.googleapis.com/${bucket.name}/chat-attachments/${fileName}`;
-            
-            // Delete the temp file
-            fs.unlinkSync(filePath);
-          } catch (error) {
-            console.error('Firebase upload error:', error);
-            // Fallback to local storage
-          }
-        }
-        
-        if (!fileUrl) {
-          const uploadDir = path.join(__dirname, '../uploads/chat-attachments');
-          
-          // Create directory if it doesn't exist
-          if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-          }
-          
-          fileName = `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
-          const targetPath = path.join(uploadDir, fileName);
-          
-          // Move the file to the uploads directory
-          fs.copyFileSync(file.path, targetPath);
-          fs.unlinkSync(file.path); // Delete the temp file
-          
-          // Create a relative URL
-          fileUrl = `/uploads/chat-attachments/${fileName}`;
-        }
-        
-        attachments.push({
-          fileName: file.originalname,
-          fileType: file.mimetype,
-          fileUrl
-        });
-      }
-    }
-    
-    const message = await Message.create({
-      sender: req.user.id,
-      content: content || '',
-      chat: chatId,
-      attachments: attachments,
-      readBy: [req.user.id] 
-    });
-    
-    chat.latestMessage = message._id;
-    await chat.save();
-    
-    // Get complete message details
-    const populatedMessage = await Message.findById(message._id)
-      .populate('sender', 'fullName avatar')
-      .populate('chat');
-    
-    res.status(201).json({
-      success: true,
-      data: populatedMessage
-    });
-    
-
+    // Rest of the function...
   } catch (error) {
     console.error(error);
     res.status(500).json({

@@ -18,14 +18,13 @@ router.use(authorize('student'));
 router.put('/profile', fileUpload.single('profilePicture'), studentController.updateStudentProfile);
 
 // Course routes
-router.get('/courses', studentController.getEnrolledCourses);
-router.get('/courses/:id', studentController.getCourseDetails);
-
-// Course enrollment routes
+router.get('/courses', studentController.getStudentCourses);  // This should handle /api/student/courses
+router.get('/courses/department', studentController.getCoursesByDepartmentAndLevel);
+router.get('/courses/department-fallback', studentController.getCoursesByDepartmentAndLevelWithFallback);
 router.get('/courses/available', studentController.getAvailableCourses);
+router.get('/courses/:id', studentController.getCourseDetails);
 router.post('/courses/:courseId/enroll', studentController.enrollInCourse);
 router.delete('/courses/:courseId/enroll', studentController.dropCourse);
-router.get('/courses/department', studentController.getCoursesByDepartmentAndLevel);
 
 // Assignment routes
 router.get('/assignments', assignmentController.getStudentAssignments);
@@ -38,16 +37,9 @@ router.put('/assignments/:id/submit',
   assignmentController.updateSubmission);
 
 // Task routes
-router.route('/tasks')
-  .get(taskController.getTasks)
-  .post(taskController.createTask);
-
-router.route('/tasks/:id')
-  .get(taskController.getTask)
-  .put(taskController.updateTask)
-  .delete(taskController.deleteTask);
-
-router.put('/tasks/:id/toggle-status', taskController.toggleTaskStatus);
+router.get('/tasks', studentController.getStudentTasks);
+router.get('/tasks/:id', studentController.getTaskDetails);
+router.post('/tasks/:id/comments', fileUpload.uploadMultiple('attachments', 2), studentController.addTaskComment);
 
 // Resource routes
 router.get('/resources', courseResourceController.getStudentResources);

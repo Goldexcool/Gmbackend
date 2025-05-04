@@ -1,4 +1,6 @@
 const nodemailer = require('nodemailer');
+const sendEmail = require('../utils/sendEmail');
+const generateVerificationCode = require('../utils/generateVerificationCode');
 
 // Create a reusable transporter with Gmail
 const getTransporter = () => {
@@ -77,159 +79,288 @@ const emailBase = (content) => `
   </div>
 `;
 
-const sendPasswordResetEmail = async (email, resetToken) => {
+/**
+ * Send a password reset email with a token link
+ * @param {string} email - Recipient email address
+ * @param {string} resetToken - Password reset token
+ * @returns {Promise<Object>} - Result with success status
+ */
+exports.sendPasswordResetEmail = async (email, resetToken) => {
   try {
-    const transporter = getTransporter();
-    const resetUrl = `${process.env.FRONTEND_URL}/${resetToken}`;
+    console.log('Sending password reset email to:', email);
     
-    const emailContent = `
+    // Generate deep link URL for mobile app
+    const mobileDeepLink = `gemspace://reset-password/${resetToken}`;
+    
+    // Fallback web URL
+    const webResetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password/${resetToken}`;
+    
+    const subject = 'GemSpace Password Reset';
+    
+    const html = emailBase(`
       <h2 style="${STYLES.sectionTitle}">Reset Your Password</h2>
-      <p style="${STYLES.paragraph}">We received a request to reset your password. To proceed with this request, please use the token below or click the button.</p>
+      <p style="${STYLES.paragraph}">We received a request to reset your password.</p>
       
-      <!-- Security notice with icon -->
-      <div style="display: flex; background-color: #fff8e1; padding: 15px; border-radius: 8px; margin-bottom: 25px; align-items: center;">
-        <div style="margin-right: 15px;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${TEAL_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-          </svg>
+      <div style="${STYLES.featureCard}">
+        <h3 style="margin-top: 0; color: ${TEAL_COLOR};">Tap the button below</h3>
+        <p>If you're on your mobile device, tap this button to open the app:</p>
+        <div style="text-align: center; margin: 20px 0;">
+          <a href="${mobileDeepLink}" style="${STYLES.button}">Reset Password in App</a>
         </div>
-        <div>
-          <p style="margin: 0; color: #b0632d; font-size: 14px;">For security reasons, this reset link will expire in 60 minutes.</p>
-        </div>
-      </div>
-      
-      <!-- Token design -->
-      <div style="${STYLES.token}">${resetToken}</div>
-      
-      <!-- CTA button -->
-      <div style="text-align: center;">
-        <a href="${resetUrl}" style="${STYLES.button}">Reset Password</a>
+        <p style="font-size: 14px; color: ${TEXT_MEDIUM};">
+          If the button doesn't work, make sure you have the GemSpace app installed.
+        </p>
       </div>
       
       <div style="${STYLES.divider}"></div>
       
-      <p style="${STYLES.paragraph}">If you didn't request a password reset, please ignore this email or contact support if you have concerns about your account security.</p>
-    `;
+      <p style="${STYLES.paragraph}">This reset request will expire in 1 hour.</p>
+      <p style="${STYLES.paragraph}">If you didn't request a password reset, you can safely ignore this email.</p>
+    `);
     
-    const mailOptions = {
-      from: {
-        name: 'GemSpace Security',
-        address: process.env.EMAIL_USER
-      },
+    // Send email
+    const sent = await sendEmail({
       to: email,
-      subject: 'Reset Your GemSpace Password',
-      html: emailBase(emailContent),
-      // Text version for better deliverability
-      text: `Reset Your GemSpace Password\n\nWe received a request to reset your password. Your token is: ${resetToken}\n\nTo reset your password, visit: ${resetUrl}\n\nThis token will expire in 60 minutes.\n\nIf you didn't request this reset, please ignore this email.`
-    };
+      subject,
+      html
+    });
     
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Password reset email sent:', info.messageId);
-    return { success: true, messageId: info.messageId };
+    if (sent) {
+      return { success: true };
+    } else {
+      return { success: false, error: 'Email could not be sent' };
+    }
   } catch (error) {
     console.error('Error sending password reset email:', error);
     return { success: false, error: error.message };
   }
 };
 
-const sendWelcomeEmail = async (email, fullName) => {
+/**
+ * Send a welcome email to new users
+ * @param {string} email - Recipient email address
+ * @param {string} name - User's name
+ * @returns {Promise<Object>} - Result with success status
+ */
+exports.sendWelcomeEmail = async (email, name) => {
   try {
-    console.log(`Sending welcome email to: ${email} (${fullName})`);
-    const transporter = getTransporter();
+    console.log('Attempting to send welcome email to:', email);
     
-    const appUrl = process.env.FRONTEND_URL || '#';
+    // Email content
+    const subject = 'Welcome to GEM-SPACE!';
+    const text = `Hi ${name},\n\nWelcome to GEM-SPACE! We're excited to have you join our academic community.\n\nGet started by exploring courses, connecting with peers, and accessing resources.\n\nBest regards,\nThe GEM-SPACE Team`;
     
-    const emailContent = `
-      <h2 style="${STYLES.sectionTitle}">Welcome to GemSpace!</h2>
-      <p style="${STYLES.paragraph}">Hello ${fullName || 'there'},</p>
-      <p style="${STYLES.paragraph}">We're thrilled to welcome you to GemSpace, your new educational hub for connecting, learning, and growing together.</p>
-      
-      <div style="${STYLES.divider}"></div>
-      
-      <h3 style="${STYLES.sectionTitle}">Discover What's Possible</h3>
-      
-      <!-- Feature cards with icons -->
-      <div style="${STYLES.featureCard}">
-        <div style="display: flex; align-items: center;">
-          <div style="margin-right: 20px; background-color: rgba(0,128,128,0.1); border-radius: 50%; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${TEAL_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-          </div>
-          <div>
-            <h4 style="margin: 0 0 5px 0; color: ${TEAL_DARK};">Connect with Peers</h4>
-            <p style="margin: 0; color: ${TEXT_MEDIUM};">Build your network with like-minded learners and collaborate on projects.</p>
-          </div>
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background-color: #4CAF50; padding: 20px; text-align: center; color: white;">
+          <h1>Welcome to GEM-SPACE!</h1>
+        </div>
+        <div style="padding: 20px; background-color: #f9f9f9; border: 1px solid #ddd;">
+          <h2>Hi ${name},</h2>
+          <p>We're excited to have you join our academic community!</p>
+          <p>Here are a few things you can do to get started:</p>
+          <ul>
+            <li>Complete your profile</li>
+            <li>Explore available courses</li>
+            <li>Connect with peers and lecturers</li>
+            <li>Access study resources</li>
+          </ul>
+          <p>If you have any questions, please don't hesitate to contact us.</p>
+          <p>Best regards,<br>The GEM-SPACE Team</p>
+        </div>
+        <div style="padding: 10px; text-align: center; font-size: 12px; color: #666;">
+          &copy; ${new Date().getFullYear()} GEM-SPACE. All rights reserved.
         </div>
       </div>
-      
-      <div style="${STYLES.featureCard}">
-        <div style="display: flex; align-items: center;">
-          <div style="margin-right: 20px; background-color: rgba(0,128,128,0.1); border-radius: 50%; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${TEAL_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
-              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
-            </svg>
-          </div>
-          <div>
-            <h4 style="margin: 0 0 5px 0; color: ${TEAL_DARK};">Access Resources</h4>
-            <p style="margin: 0; color: ${TEXT_MEDIUM};">Explore our extensive library of educational materials and expert guidance.</p>
-          </div>
-        </div>
-      </div>
-      
-      <div style="${STYLES.featureCard}">
-        <div style="display: flex; align-items: center;">
-          <div style="margin-right: 20px; background-color: rgba(0,128,128,0.1); border-radius: 50%; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${TEAL_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12 6 12 12 16 14"></polyline>
-            </svg>
-          </div>
-          <div>
-            <h4 style="margin: 0 0 5px 0; color: ${TEAL_DARK};">Track Progress</h4>
-            <p style="margin: 0; color: ${TEXT_MEDIUM};">Monitor your learning journey with detailed insights and analytics.</p>
-          </div>
-        </div>
-      </div>
-      
-      <div style="${STYLES.divider}"></div>
-      
-      <!-- CTA button -->
-      <div style="text-align: center;">
-        <p style="${STYLES.paragraph}">Ready to begin your learning adventure?</p>
-        <a href="${appUrl}" style="${STYLES.button}">Get Started Now</a>
-      </div>
-      
-      <p style="${STYLES.paragraph}">If you have any questions, our support team is always ready to help you succeed.</p>
-      <p style="${STYLES.paragraph}">Happy learning!<br>The GemSpace Team</p>
     `;
     
-    const mailOptions = {
-      from: {
-        name: 'GemSpace Team',
-        address: process.env.EMAIL_USER
-      },
+    // Send email
+    const sent = await sendEmail({
       to: email,
-      subject: 'Welcome to GemSpace! Your Learning Journey Begins',
-      html: emailBase(emailContent),
-      // Text version for better deliverability
-      text: `Welcome to GemSpace!\n\nHello ${fullName || 'there'},\n\nWe're thrilled to welcome you to GemSpace, your new educational hub for connecting, learning, and growing together.\n\nWith GemSpace, you can:\n- Connect with other learners\n- Access educational resources\n- Track your learning progress\n- Join live learning sessions\n\nGet started now: ${appUrl}\n\nHappy learning!\nThe GemSpace Team`
-    };
+      subject,
+      text,
+      html
+    });
     
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Welcome email sent:', info.messageId);
-    return { success: true, messageId: info.messageId };
+    if (sent) {
+      console.log('Welcome email sent successfully');
+      return { success: true };
+    } else {
+      console.error('Failed to send welcome email');
+      return { 
+        success: false, 
+        error: 'Email could not be sent' 
+      };
+    }
   } catch (error) {
     console.error('Error sending welcome email:', error);
-    return { success: false, error: error.message };
+    return { 
+      success: false, 
+      error: error.message 
+    };
   }
 };
 
-module.exports = {
-  sendPasswordResetEmail,
-  sendWelcomeEmail
+/**
+ * Send a verification code via email
+ * @param {string} email - Recipient email address
+ * @param {string} purpose - Purpose of verification (e.g., 'account', 'password-reset')
+ * @returns {Promise<Object>} - Result with success status and verification code
+ */
+exports.sendVerificationCode = async (email, purpose = 'verification') => {
+  try {
+    console.log(`Sending ${purpose} code to: ${email}`);
+    
+    // Generate verification code
+    const verificationCode = generateVerificationCode(6); // 6-digit code
+    
+    // Email content based on purpose
+    let subject, text, html;
+    
+    switch (purpose) {
+      case 'account':
+        subject = 'GEM-SPACE Account Verification';
+        text = `Your verification code is: ${verificationCode}\nPlease enter this code to verify your account.`;
+        html = getAccountVerificationTemplate(verificationCode);
+        break;
+      case 'password-reset':
+        subject = 'GEM-SPACE Password Reset';
+        text = `Your password reset code is: ${verificationCode}\nPlease enter this code to reset your password.`;
+        html = getPasswordResetTemplate(verificationCode);
+        break;
+      case 'login':
+        subject = 'GEM-SPACE Login Verification';
+        text = `Your login verification code is: ${verificationCode}\nPlease enter this code to complete your login.`;
+        html = getLoginVerificationTemplate(verificationCode);
+        break;
+      default:
+        subject = 'GEM-SPACE Verification Code';
+        text = `Your verification code is: ${verificationCode}`;
+        html = getDefaultVerificationTemplate(verificationCode);
+    }
+    
+    // Send email
+    const sent = await sendEmail({
+      to: email,
+      subject,
+      text,
+      html
+    });
+    
+    if (sent) {
+      console.log(`${purpose} code sent successfully to ${email}`);
+      return { 
+        success: true,
+        verificationCode // This will be saved in the database, not sent to client
+      };
+    } else {
+      console.error(`Failed to send ${purpose} code`);
+      return { 
+        success: false, 
+        error: 'Email could not be sent' 
+      };
+    }
+  } catch (error) {
+    console.error(`Error sending ${purpose} code:`, error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
 };
+
+// Email templates
+function getAccountVerificationTemplate(code) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #4CAF50; padding: 20px; text-align: center; color: white;">
+        <h1>Welcome to GEM-SPACE</h1>
+      </div>
+      <div style="padding: 20px; background-color: #f9f9f9; border: 1px solid #ddd;">
+        <h2>Account Verification</h2>
+        <p>Thank you for creating an account. Please verify your email address by entering the code below:</p>
+        <div style="background-color: #eee; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; margin: 20px 0; font-weight: bold;">
+          ${code}
+        </div>
+        <p>This code will expire in 15 minutes.</p>
+        <p>If you didn't create an account with us, you can safely ignore this email.</p>
+      </div>
+      <div style="padding: 10px; text-align: center; font-size: 12px; color: #666;">
+        &copy; ${new Date().getFullYear()} GEM-SPACE. All rights reserved.
+      </div>
+    </div>
+  `;
+}
+
+function getPasswordResetTemplate(code) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #2196F3; padding: 20px; text-align: center; color: white;">
+        <h1>GEM-SPACE Password Reset</h1>
+      </div>
+      <div style="padding: 20px; background-color: #f9f9f9; border: 1px solid #ddd;">
+        <h2>Reset Your Password</h2>
+        <p>We received a request to reset your password. Enter the code below to proceed:</p>
+        <div style="background-color: #eee; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; margin: 20px 0; font-weight: bold;">
+          ${code}
+        </div>
+        <p>This code will expire in 1 hour.</p>
+        <p>If you didn't request a password reset, you can safely ignore this email.</p>
+      </div>
+      <div style="padding: 10px; text-align: center; font-size: 12px; color: #666;">
+        &copy; ${new Date().getFullYear()} GEM-SPACE. All rights reserved.
+      </div>
+    </div>
+  `;
+}
+
+function getLoginVerificationTemplate(code) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #FF9800; padding: 20px; text-align: center; color: white;">
+        <h1>GEM-SPACE Login Verification</h1>
+      </div>
+      <div style="padding: 20px; background-color: #f9f9f9; border: 1px solid #ddd;">
+        <h2>Complete Your Login</h2>
+        <p>To secure your account, we need to verify your identity. Enter the code below to complete your login:</p>
+        <div style="background-color: #eee; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; margin: 20px 0; font-weight: bold;">
+          ${code}
+        </div>
+        <p>This code will expire in 15 minutes.</p>
+        <p>If you didn't attempt to log in, please secure your account by changing your password immediately.</p>
+      </div>
+      <div style="padding: 10px; text-align: center; font-size: 12px; color: #666;">
+        &copy; ${new Date().getFullYear()} GEM-SPACE. All rights reserved.
+      </div>
+    </div>
+  `;
+}
+
+function getDefaultVerificationTemplate(code) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #607D8B; padding: 20px; text-align: center; color: white;">
+        <h1>GEM-SPACE Verification</h1>
+      </div>
+      <div style="padding: 20px; background-color: #f9f9f9; border: 1px solid #ddd;">
+        <h2>Your Verification Code</h2>
+        <p>You requested a verification code. Please enter it to proceed:</p>
+        <div style="background-color: #eee; padding: 15px; text-align: center; font-size: 24px; letter-spacing: 5px; margin: 20px 0; font-weight: bold;">
+          ${code}
+        </div>
+        <p>This code will expire in 15 minutes.</p>
+        <p>If you didn't request this code, you can safely ignore this email.</p>
+      </div>
+      <div style="padding: 10px; text-align: center; font-size: 12px; color: #666;">
+        &copy; ${new Date().getFullYear()} GEM-SPACE. All rights reserved.
+      </div>
+    </div>
+  `;
+}
+
+module.exports = {
+  sendPasswordResetEmail: exports.sendPasswordResetEmail,
+  sendWelcomeEmail: exports.sendWelcomeEmail,
+  sendVerificationCode: exports.sendVerificationCode
+};
+

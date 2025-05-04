@@ -16,7 +16,7 @@ router.get('/users/:id', adminController.getUserById);
 router.put('/users/:id', adminController.updateUser);
 router.delete('/users/:id', adminController.deleteUser);
 router.post('/users', adminController.createUser);
-router.post('/users/bulk', adminController.createUsersBulk);
+// router.post('/users/bulk', adminController.createUsersBulk);
 router.patch('/users/:userId/status', adminController.toggleUserStatus);
 router.patch('/users/:userId/role', adminController.changeUserRole);
 router.post('/users/:userId/reset-password', adminController.resetUserPassword);
@@ -56,6 +56,10 @@ router.post('/courses', adminController.createCourse);
 router.put('/courses/:id', adminController.updateCourse);
 router.delete('/courses/:id', adminController.deleteCourse);
 router.delete('/schedules/course/:courseId', adminController.deleteCoursesSchedules);
+// Set course as compulsory/optional
+router.patch('/courses/:courseId/compulsory', adminController.setCourseCompulsory);
+// Assign compulsory courses to matching students
+router.post('/courses/assign-compulsory', adminController.assignCompulsoryCourses);
 
 // Academic session management
 router.get('/academic-sessions', adminController.getAllAcademicSessions);
@@ -112,13 +116,22 @@ router.route('/timetables/:id')
   .put(examTimetableController.updateExamTimetable)
   .delete(examTimetableController.deleteExamTimetable);
 
+// Bulk operations for exam sessions
+router.route('/timetables/:id/sessions/bulk')
+  .post(examTimetableController.bulkAddExamSessions)
+  .put(examTimetableController.bulkUpdateExamSessions)
+  .delete(examTimetableController.bulkDeleteExamSessions);
+
+// Individual session route
 router.route('/timetables/:id/sessions')
   .post(examTimetableController.addExamSession);
 
+// Session ID route
 router.route('/timetables/:id/sessions/:sessionId')
   .put(examTimetableController.updateExamSession)
   .delete(examTimetableController.removeExamSession);
 
+// Publish timetable route
 router.route('/timetables/:id/publish')
   .put(examTimetableController.togglePublishStatus);
 

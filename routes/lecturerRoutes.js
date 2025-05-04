@@ -31,7 +31,18 @@ router.delete('/resources/:id', resourceController.deleteResource);
 
 // Assignment routes
 router.get('/assignments', assignmentController.getLecturerAssignments);
-router.get('/assignments/:id', lecturerController.getLecturerAssignment);
+// router.get('/assignments/:id', assignmentController.getLecturerAssignment);
+router.post(
+  '/assignments', 
+  fileUpload.uploadMultiple('files', 5), 
+  assignmentController.createAssignment
+);
+router.put(
+  '/assignments/:id', 
+  fileUpload.uploadMultiple('files', 5), 
+  assignmentController.updateAssignment
+);
+router.delete('/assignments/:id', assignmentController.deleteAssignment);
 
 // Course representative routes
 router.get('/course-reps', courseRepController.getCourseReps);
@@ -55,10 +66,12 @@ router.get('/faqs', lecturerController.getAllFAQs);
 router.get('/departments', lecturerController.getDepartments);
 router.get('/departments/:departmentName', lecturerController.getDepartmentDetails);
 
-// Schedule and task routes
-router.post('/schedule', lecturerController.setSchedule);
-router.post('/tasks', lecturerController.createTask);
-router.put('/tasks/:taskId', lecturerController.updateTask);
+// Task/Notice Board routes
+router.get('/tasks', lecturerController.getTasks);
+router.get('/tasks/:id', lecturerController.getTaskDetails);
+router.post('/tasks', fileUpload.uploadMultiple('attachments', 3), lecturerController.createTask);
+router.put('/tasks/:id', fileUpload.uploadMultiple('attachments', 3), lecturerController.updateTask);
+router.delete('/tasks/:id', lecturerController.deleteTask);
 
 // Chat routes
 router.post('/chat', lecturerController.chatWithStudent);

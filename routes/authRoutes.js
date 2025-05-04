@@ -19,9 +19,15 @@ const authController = require('../controllers/authController');
 router.post('/register', register);
 router.post('/login', login);
 router.post('/forgot-password', forgotPassword);
-router.post('/reset-password/:resetToken', resetPassword);
+router.post('/reset-password/:resetToken', authController.resetPassword);
 router.get('/verify-email/:verificationToken', verifyEmail);
 router.post('/refresh-token', refreshToken);
+
+// Send verification code
+router.post('/send-verification', authController.sendVerificationCode);
+
+// Verify code
+router.post('/verify-code', authController.verifyCode);
 
 // Protected routes
 router.get('/me', protect, getCurrentUser);

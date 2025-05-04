@@ -1,71 +1,72 @@
-// models/Course.js
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-const courseSchema = new Schema({
-  code: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true
-  },
+const CourseSchema = new Schema({
   title: {
     type: String,
-    required: true,
+    required: [true, 'Please add a course title'],
+    trim: true
+  },
+  code: {
+    type: String,
+    required: [true, 'Please add a course code'],
+    unique: true,
     trim: true
   },
   description: {
     type: String,
-    default: ''
-  },
-  creditHours: {
-    type: Number,
-    required: true,
-    default: 3
+    trim: true
   },
   department: {
-    type: String,
-    required: true,
-    trim: true
+    type: mongoose.Schema.Types.Mixed, // Accept both ObjectId and String
+    required: [true, 'Please specify the department'],
+    // This will handle both cases:
+    // 1. When it's an ObjectId - use it for population
+    // 2. When it's a string - just display it as a name
+    validate: {
+      validator: function(v) {
+        // Accept either ObjectId or String
+        return mongoose.Types.ObjectId.isValid(v) || (typeof v === 'string' && v.trim().length > 0);
+      },
+      message: props => `${props.value} is not a valid department ID or name`
+    }
   },
   level: {
     type: String,
-    required: true,
-    enum: ['100', '200', '300', '400', '500', 'Graduate']
+    required: [true, 'Please specify the level']
+  },
+  credits: {
+    type: Number,
+    required: [true, 'Please specify the credit units']
+  },
+  semester: {
+    type: String,
+    required: [true, 'Please specify the semester'],
+    enum: ['First', 'Second', 'Summer']
   },
   academicSession: {
     type: Schema.Types.ObjectId,
     ref: 'AcademicSession',
-    required: true
+    required: [true, 'Please specify the academic session']
   },
-  semester: {
-    type: String,
-    required: true,
-    enum: ['First', 'Second', 'Both'],
-    set: function(val) {
-      // Convert numeric values to strings
-      if (val === 1 || val === '1') return 'First';
-      if (val === 2 || val === '2') return 'Second';
-      return val;
-    }
-  },
+  lecturer: [{  // Changed to array to support multiple lecturers
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Lecturer'
+  }],
   isActive: {
     type: Boolean,
     default: true
   },
-  lecturer: [{
-    type: Schema.Types.ObjectId,
-    ref: 'Lecturer'
-  }],
+  isCompulsory: {
+    type: Boolean,
+    default: false
+  },
   sessionHistory: [{
     session: {
       type: Schema.Types.ObjectId,
       ref: 'AcademicSession'
     },
-    semester: {
-      type: String,
-      enum: ['First', 'Second', 'Both']
-    },
+    semester: String,
     lecturers: [{
       type: Schema.Types.ObjectId,
       ref: 'Lecturer'
@@ -74,56 +75,20 @@ const courseSchema = new Schema({
       type: Number,
       default: 0
     }
-  }],
-  courseRep: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Student'
-  }
+  }]
 }, { timestamps: true });
 
-courseSchema.index({ academicSession: 1, level: 1 });
-courseSchema.index({ department: 1, academicSession: 1 });
-
-courseSchema.pre('save', async function(next) {
-  if (this.isModified('lecturer') || this.isNew) {
-    const hasMatchingEntry = this.sessionHistory.some(entry => 
-      entry.session.toString() === this.academicSession.toString() && 
-      entry.semester === this.semester
-    );
-    
-    if (!hasMatchingEntry) {
-      const Student = mongoose.model('Student');
-      let enrollmentCount = 0;
-      
-      try {
-        enrollmentCount = await Student.countDocuments({ 
-          courses: this._id,
-          isActive: true 
-        });
-      } catch (err) {
-        console.error('Error counting enrollments:', err);
-      }
-      
-      this.sessionHistory.push({
-        session: this.academicSession,
-        semester: this.semester,
-        lecturers: this.lecturer,
-        enrollmentCount
-      });
-    } else {
-      const entryIndex = this.sessionHistory.findIndex(entry => 
-        entry.session.toString() === this.academicSession.toString() && 
-        entry.semester === this.semester
-      );
-      
-      if (entryIndex !== -1) {
-        this.sessionHistory[entryIndex].lecturers = this.lecturer;
-      }
-    }
-  }
-  
-  next();
+// Virtual for creditHours that returns the value of credits
+CourseSchema.virtual('creditHours').get(function() {
+  return this.credits;
 });
 
-const Course = mongoose.model('Course', courseSchema);
-module.exports = Course;
+// You might also want to allow setting credits through creditHours
+CourseSchema.virtual('creditHours').set(function(value) {
+  this.credits = value;
+});
+
+CourseSchema.set('toObject', { virtuals: true });
+CourseSchema.set('toJSON', { virtuals: true });
+
+module.exports = mongoose.model('Course', CourseSchema);

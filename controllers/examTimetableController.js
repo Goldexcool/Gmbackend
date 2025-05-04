@@ -12,11 +12,11 @@ async function getCurrentAcademicSession() {
     const session = await AcademicSession.findOne({})
       .sort({ year: -1, createdAt: -1 })
       .limit(1);
-    
+
     if (!session) {
       throw new Error('No academic sessions found');
     }
-    
+
     return session._id;
   } catch (error) {
     console.error('Error getting current session:', error);
@@ -38,7 +38,7 @@ exports.createExamTimetable = async (req, res) => {
       endDate,
       sessions = []
     } = req.body;
-    
+
     // Validate required fields
     if (!title || !semester || !examType || !startDate || !endDate) {
       return res.status(400).json({
@@ -46,7 +46,7 @@ exports.createExamTimetable = async (req, res) => {
         message: 'Please provide all required fields'
       });
     }
-    
+
     // If academicSession not provided, use current active session
     if (!academicSession) {
       const currentSession = await AcademicSession.getCurrent();
@@ -66,7 +66,7 @@ exports.createExamTimetable = async (req, res) => {
           message: 'Invalid academic session ID format'
         });
       }
-      
+
       // Verify the academic session exists
       const sessionExists = await AcademicSession.findById(academicSession);
       if (!sessionExists) {
@@ -76,7 +76,7 @@ exports.createExamTimetable = async (req, res) => {
         });
       }
     }
-    
+
     // Create timetable
     const timetable = new ExamTimetable({
       title,
@@ -88,9 +88,9 @@ exports.createExamTimetable = async (req, res) => {
       sessions,
       createdBy: req.user.id
     });
-    
+
     await timetable.save();
-    
+
     res.status(201).json({
       success: true,
       data: timetable
@@ -114,7 +114,7 @@ exports.getAllExamTimetables = async (req, res) => {
       .populate('academicSession', 'name year')
       .populate('createdBy', 'name')
       .sort('-createdAt');
-    
+
     res.status(200).json({
       success: true,
       count: timetables.length,
@@ -150,14 +150,14 @@ exports.getExamTimetable = async (req, res) => {
           select: 'name email'
         }
       });
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     res.status(200).json({
       success: true,
       data: timetable
@@ -187,16 +187,16 @@ exports.updateExamTimetable = async (req, res) => {
       sessions,
       isPublished
     } = req.body;
-    
+
     let timetable = await ExamTimetable.findById(req.params.id);
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     // If timetable is already published and we're not specifically changing publish status
     if (timetable.isPublished && isPublished === undefined) {
       return res.status(400).json({
@@ -204,7 +204,7 @@ exports.updateExamTimetable = async (req, res) => {
         message: 'Cannot modify a published timetable. Unpublish it first.'
       });
     }
-    
+
     // Update fields
     const updateData = {
       title,
@@ -214,11 +214,11 @@ exports.updateExamTimetable = async (req, res) => {
       sessions,
       updatedBy: req.user.id
     };
-    
+
     // Only update dates if provided
     if (startDate) updateData.startDate = new Date(startDate);
     if (endDate) updateData.endDate = new Date(endDate);
-    
+
     // Handle publication status change
     if (isPublished !== undefined) {
       updateData.isPublished = isPublished;
@@ -226,14 +226,14 @@ exports.updateExamTimetable = async (req, res) => {
         updateData.publishedAt = Date.now();
       }
     }
-    
+
     // Update the timetable
     timetable = await ExamTimetable.findByIdAndUpdate(
       req.params.id,
       { $set: updateData },
       { new: true, runValidators: true }
     );
-    
+
     res.status(200).json({
       success: true,
       data: timetable
@@ -254,14 +254,14 @@ exports.updateExamTimetable = async (req, res) => {
 exports.deleteExamTimetable = async (req, res) => {
   try {
     const timetable = await ExamTimetable.findById(req.params.id);
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     // Only allow deletion of unpublished timetables
     if (timetable.isPublished) {
       return res.status(400).json({
@@ -269,9 +269,9 @@ exports.deleteExamTimetable = async (req, res) => {
         message: 'Cannot delete a published timetable. Unpublish it first.'
       });
     }
-    
+
     await timetable.deleteOne();
-    
+
     res.status(200).json({
       success: true,
       data: {}
@@ -300,23 +300,23 @@ exports.addExamSession = async (req, res) => {
       invigilators = [],
       notes
     } = req.body;
-    
+
     if (!course || !date || !startTime || !endTime || !venue) {
       return res.status(400).json({
         success: false,
         message: 'Please provide all required fields'
       });
     }
-    
+
     const timetable = await ExamTimetable.findById(req.params.id);
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     // Check if timetable is already published
     if (timetable.isPublished) {
       return res.status(400).json({
@@ -324,7 +324,7 @@ exports.addExamSession = async (req, res) => {
         message: 'Cannot modify a published timetable. Unpublish it first.'
       });
     }
-    
+
     // Verify course exists
     const courseExists = await Course.findById(course);
     if (!courseExists) {
@@ -333,7 +333,7 @@ exports.addExamSession = async (req, res) => {
         message: 'Course not found'
       });
     }
-    
+
     // Add new session
     timetable.sessions.push({
       course,
@@ -344,10 +344,10 @@ exports.addExamSession = async (req, res) => {
       invigilators,
       notes
     });
-    
+
     timetable.updatedBy = req.user.id;
     await timetable.save();
-    
+
     res.status(201).json({
       success: true,
       data: timetable
@@ -376,16 +376,25 @@ exports.updateExamSession = async (req, res) => {
       invigilators,
       notes
     } = req.body;
-    
+
+    // Don't require all fields for updates
+    // Just check if at least one field is provided
+    if (!course && !date && !startTime && !endTime && !venue && !invigilators && notes === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide at least one field to update'
+      });
+    }
+
     const timetable = await ExamTimetable.findById(req.params.id);
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     // Check if timetable is already published
     if (timetable.isPublished) {
       return res.status(400).json({
@@ -393,34 +402,64 @@ exports.updateExamSession = async (req, res) => {
         message: 'Cannot modify a published timetable. Unpublish it first.'
       });
     }
-    
+
     // Find the session by ID
     const sessionIndex = timetable.sessions.findIndex(
       session => session._id.toString() === req.params.sessionId
     );
-    
+
     if (sessionIndex === -1) {
       return res.status(404).json({
         success: false,
         message: 'Exam session not found'
       });
     }
-    
-    // Update session fields
-    if (course) timetable.sessions[sessionIndex].course = course;
+
+    // Update session fields - only if they are provided
+    if (course) {
+      // Verify course exists
+      const courseExists = await Course.findById(course);
+      if (!courseExists) {
+        return res.status(404).json({
+          success: false,
+          message: 'Course not found'
+        });
+      }
+      timetable.sessions[sessionIndex].course = course;
+    }
+
     if (date) timetable.sessions[sessionIndex].date = new Date(date);
     if (startTime) timetable.sessions[sessionIndex].startTime = startTime;
     if (endTime) timetable.sessions[sessionIndex].endTime = endTime;
     if (venue) timetable.sessions[sessionIndex].venue = venue;
     if (invigilators) timetable.sessions[sessionIndex].invigilators = invigilators;
     if (notes !== undefined) timetable.sessions[sessionIndex].notes = notes;
-    
+
     timetable.updatedBy = req.user.id;
     await timetable.save();
-    
+
+    // Populate response data for clarity
+    await timetable.populate([
+      {
+        path: 'sessions.course',
+        select: 'title code'
+      },
+      {
+        path: 'academicSession',
+        select: 'name year'
+      }
+    ]);
+
     res.status(200).json({
       success: true,
-      data: timetable
+      message: 'Exam session updated successfully',
+      data: {
+        timetable: {
+          _id: timetable._id,
+          title: timetable.title
+        },
+        session: timetable.sessions[sessionIndex]
+      }
     });
   } catch (error) {
     console.error(error);
@@ -438,14 +477,14 @@ exports.updateExamSession = async (req, res) => {
 exports.removeExamSession = async (req, res) => {
   try {
     const timetable = await ExamTimetable.findById(req.params.id);
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     // Check if timetable is already published
     if (timetable.isPublished) {
       return res.status(400).json({
@@ -453,15 +492,15 @@ exports.removeExamSession = async (req, res) => {
         message: 'Cannot modify a published timetable. Unpublish it first.'
       });
     }
-    
+
     // Remove session
     timetable.sessions = timetable.sessions.filter(
       session => session._id.toString() !== req.params.sessionId
     );
-    
+
     timetable.updatedBy = req.user.id;
     await timetable.save();
-    
+
     res.status(200).json({
       success: true,
       data: timetable
@@ -482,34 +521,327 @@ exports.removeExamSession = async (req, res) => {
 exports.togglePublishStatus = async (req, res) => {
   try {
     const { publish } = req.body;
-    
+
     if (publish === undefined) {
       return res.status(400).json({
         success: false,
         message: 'Please specify publish status'
       });
     }
-    
+
     const timetable = await ExamTimetable.findById(req.params.id);
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found'
       });
     }
-    
+
     timetable.isPublished = publish;
     if (publish) {
       timetable.publishedAt = Date.now();
     }
-    
+
     timetable.updatedBy = req.user.id;
     await timetable.save();
-    
+
     res.status(200).json({
       success: true,
       data: timetable
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Bulk add multiple exam sessions to a timetable
+// @route   POST /api/admin/timetables/:id/sessions/bulk
+// @access  Private/Admin
+exports.bulkAddExamSessions = async (req, res) => {
+  try {
+    const { sessions } = req.body;
+
+    if (!sessions || !Array.isArray(sessions) || sessions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of exam sessions'
+      });
+    }
+
+    const timetable = await ExamTimetable.findById(req.params.id);
+
+    if (!timetable) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam timetable not found'
+      });
+    }
+
+    // Check if timetable is already published
+    if (timetable.isPublished) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot modify a published timetable. Unpublish it first.'
+      });
+    }
+
+    // Validate all sessions before adding any
+    for (const session of sessions) {
+      const { course, date, startTime, endTime, venue } = session;
+
+      if (!course || !date || !startTime || !endTime || !venue) {
+        return res.status(400).json({
+          success: false,
+          message: 'All sessions must include course, date, startTime, endTime, and venue'
+        });
+      }
+
+      // Verify course exists
+      const courseExists = await Course.findById(course);
+      if (!courseExists) {
+        return res.status(404).json({
+          success: false,
+          message: `Course not found: ${course}`
+        });
+      }
+    }
+
+    // Add all sessions
+    for (const session of sessions) {
+      const { course, date, startTime, endTime, venue, invigilators = [], notes } = session;
+
+      timetable.sessions.push({
+        course,
+        date: new Date(date),
+        startTime,
+        endTime,
+        venue,
+        invigilators,
+        notes
+      });
+    }
+
+    timetable.updatedBy = req.user.id;
+    await timetable.save();
+
+    // Populate for response
+    await timetable.populate([
+      {
+        path: 'sessions.course',
+        select: 'title code'
+      },
+      {
+        path: 'academicSession',
+        select: 'name year'
+      }
+    ]);
+
+    res.status(201).json({
+      success: true,
+      message: `${sessions.length} exam sessions added successfully`,
+      data: timetable
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Bulk update multiple exam sessions
+// @route   PUT /api/admin/timetables/:id/sessions/bulk
+// @access  Private/Admin
+exports.bulkUpdateExamSessions = async (req, res) => {
+  try {
+    const { sessions } = req.body;
+
+    if (!sessions || !Array.isArray(sessions) || sessions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of sessions to update'
+      });
+    }
+
+    const timetable = await ExamTimetable.findById(req.params.id);
+
+    if (!timetable) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam timetable not found'
+      });
+    }
+
+    // Check if timetable is already published
+    if (timetable.isPublished) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot modify a published timetable. Unpublish it first.'
+      });
+    }
+
+    const results = [];
+
+    // Process each session update
+    for (const sessionUpdate of sessions) {
+      const { id, course, date, startTime, endTime, venue, invigilators, notes } = sessionUpdate;
+
+      if (!id) {
+        results.push({
+          success: false,
+          message: 'Session ID is required for updates',
+          data: sessionUpdate
+        });
+        continue;
+      }
+
+      // Find the session by ID
+      const sessionIndex = timetable.sessions.findIndex(
+        session => session._id.toString() === id
+      );
+
+      if (sessionIndex === -1) {
+        results.push({
+          success: false,
+          message: 'Session not found',
+          id
+        });
+        continue;
+      }
+
+      // Update fields if provided
+      try {
+        if (course) {
+          // Verify course exists
+          const courseExists = await Course.findById(course);
+          if (!courseExists) {
+            results.push({
+              success: false,
+              message: 'Course not found',
+              id,
+              course
+            });
+            continue;
+          }
+          timetable.sessions[sessionIndex].course = course;
+        }
+
+        if (date) timetable.sessions[sessionIndex].date = new Date(date);
+        if (startTime) timetable.sessions[sessionIndex].startTime = startTime;
+        if (endTime) timetable.sessions[sessionIndex].endTime = endTime;
+        if (venue) timetable.sessions[sessionIndex].venue = venue;
+        if (invigilators) timetable.sessions[sessionIndex].invigilators = invigilators;
+        if (notes !== undefined) timetable.sessions[sessionIndex].notes = notes;
+
+        results.push({
+          success: true,
+          message: 'Session updated successfully',
+          id
+        });
+      } catch (error) {
+        results.push({
+          success: false,
+          message: error.message,
+          id
+        });
+      }
+    }
+
+    timetable.updatedBy = req.user.id;
+    await timetable.save();
+
+    // Populate for response
+    await timetable.populate([
+      {
+        path: 'sessions.course',
+        select: 'title code'
+      },
+      {
+        path: 'academicSession',
+        select: 'name year'
+      }
+    ]);
+
+    const successCount = results.filter(r => r.success).length;
+
+    res.status(200).json({
+      success: true,
+      message: `${successCount} out of ${sessions.length} sessions updated successfully`,
+      results,
+      data: timetable
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Bulk delete multiple exam sessions
+// @route   DELETE /api/admin/timetables/:id/sessions/bulk
+// @access  Private/Admin
+exports.bulkDeleteExamSessions = async (req, res) => {
+  try {
+    const { sessionIds } = req.body;
+
+    if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of session IDs to delete'
+      });
+    }
+
+    const timetable = await ExamTimetable.findById(req.params.id);
+
+    if (!timetable) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam timetable not found'
+      });
+    }
+
+    // Check if timetable is already published
+    if (timetable.isPublished) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot modify a published timetable. Unpublish it first.'
+      });
+    }
+
+    // Count existing sessions that match the provided IDs
+    const initialCount = timetable.sessions.length;
+
+    // Remove sessions by filtering out those with matching IDs
+    timetable.sessions = timetable.sessions.filter(
+      session => !sessionIds.includes(session._id.toString())
+    );
+
+    // Calculate how many sessions were actually removed
+    const removedCount = initialCount - timetable.sessions.length;
+
+    timetable.updatedBy = req.user.id;
+    await timetable.save();
+
+    res.status(200).json({
+      success: true,
+      message: `${removedCount} out of ${sessionIds.length} exam sessions removed successfully`,
+      data: {
+        timetableId: timetable._id,
+        requestedDeletions: sessionIds.length,
+        actualDeletions: removedCount,
+        remainingSessions: timetable.sessions.length
+      }
     });
   } catch (error) {
     console.error(error);
@@ -532,7 +864,7 @@ exports.getPublishedTimetables = async (req, res) => {
     const timetables = await ExamTimetable.find({ isPublished: true })
       .populate('academicSession', 'name year')
       .sort('-publishedAt');
-    
+
     res.status(200).json({
       success: true,
       count: timetables.length,
@@ -570,14 +902,14 @@ exports.getPublishedTimetable = async (req, res) => {
           select: 'name email'
         }
       });
-    
+
     if (!timetable) {
       return res.status(404).json({
         success: false,
         message: 'Exam timetable not found or not published'
       });
     }
-    
+
     res.status(200).json({
       success: true,
       data: timetable
@@ -599,44 +931,44 @@ exports.getLecturerTimetable = async (req, res) => {
   try {
     // Get the lecturer profile
     const lecturer = await Lecturer.findOne({ user: req.user.id });
-    
+
     if (!lecturer) {
       return res.status(404).json({
         success: false,
         message: 'Lecturer profile not found'
       });
     }
-    
+
     // Find courses taught by this lecturer
-    const courses = await Course.find({ 
-      lecturer: lecturer._id 
+    const courses = await Course.find({
+      lecturer: lecturer._id
     }).select('_id');
-    
+
     const courseIds = courses.map(course => course._id);
-    
+
     // Find all published timetables
-    const timetables = await ExamTimetable.find({ 
-      isPublished: true 
+    const timetables = await ExamTimetable.find({
+      isPublished: true
     }).populate('academicSession', 'name year');
-    
+
     // Filter sessions to only include courses taught by this lecturer
     // or where lecturer is an invigilator
     const lecturerTimetables = timetables.map(timetable => {
       // Deep clone the timetable object
       const filteredTimetable = JSON.parse(JSON.stringify(timetable));
-      
+
       // Filter sessions for this lecturer's courses
       filteredTimetable.sessions = timetable.sessions.filter(session => {
         // Include if course is taught by lecturer OR lecturer is an invigilator
         return (
-          courseIds.some(id => id.toString() === session.course.toString()) || 
+          courseIds.some(id => id.toString() === session.course.toString()) ||
           session.invigilators.some(inv => inv.toString() === lecturer._id.toString())
         );
       });
-      
+
       return filteredTimetable;
     }).filter(timetable => timetable.sessions.length > 0); // Only include timetables with matching sessions
-    
+
     res.status(200).json({
       success: true,
       count: lecturerTimetables.length,
@@ -660,36 +992,36 @@ exports.getStudentTimetableByAdmin = async (req, res) => {
   try {
     const { userId } = req.params;
     const { academicSession } = req.query;
-    
+
     // Find student by user ID
     const student = await Student.findOne({ user: userId })
       .populate('user', 'fullName email')
       .populate('department', 'name');
-    
+
     if (!student) {
       return res.status(404).json({
         success: false,
         message: 'Student not found'
       });
     }
-    
+
     // Define query for exams
     const query = {};
-    
+
     // If academic session is specified, include that filter
     if (academicSession) {
       query.academicSession = academicSession;
     }
-    
+
     // Find all course enrollments for this student
     const enrollments = await Enrollment.find({
       student: student._id,
       status: 'approved'
     }).populate('course', 'code title');
-    
+
     // Extract course IDs
     const courseIds = enrollments.map(enrollment => enrollment.course._id);
-    
+
     // Find exam timetables that include these courses
     const examTimetables = await ExamTimetable.find(query)
       .populate('academicSession', 'name year')
@@ -702,12 +1034,12 @@ exports.getStudentTimetableByAdmin = async (req, res) => {
           { path: 'venue', select: 'name capacity location' }
         ]
       });
-    
+
     // Filter out timetables with no relevant sessions
-    const relevantTimetables = examTimetables.filter(timetable => 
+    const relevantTimetables = examTimetables.filter(timetable =>
       timetable.examSessions && timetable.examSessions.length > 0
     );
-    
+
     // Format the response data
     const formattedTimetables = relevantTimetables.map(timetable => ({
       id: timetable._id,
@@ -725,7 +1057,7 @@ exports.getStudentTimetableByAdmin = async (req, res) => {
         instructions: session.instructions
       }))
     }));
-    
+
     res.status(200).json({
       success: true,
       data: {
@@ -755,14 +1087,14 @@ exports.getStudentTimetableByAdmin = async (req, res) => {
 exports.getStudentTimetable = async (req, res) => {
   try {
     // Only admins can check timetables for other students
-    const userId = req.user.role === 'admin' && req.query.userId 
-      ? req.query.userId 
+    const userId = req.user.role === 'admin' && req.query.userId
+      ? req.query.userId
       : req.user.id;
-    
+
     // Get the student profile
     const student = await Student.findOne({ user: userId })
       .populate('courses', '_id');
-    
+
     // If no student profile, still return published timetables without filtering
     if (!student) {
       // For admins, we'll return all timetables
@@ -773,7 +1105,7 @@ exports.getStudentTimetable = async (req, res) => {
             path: 'sessions.course',
             select: 'title code'
           });
-        
+
         return res.status(200).json({
           success: true,
           count: allTimetables.length,
@@ -788,35 +1120,35 @@ exports.getStudentTimetable = async (req, res) => {
         });
       }
     }
-    
+
     // Get course IDs enrolled by the student
     const courseIds = student.courses.map(course => course._id);
-    
+
     // Find all published timetables
-    const timetables = await ExamTimetable.find({ 
-      isPublished: true 
+    const timetables = await ExamTimetable.find({
+      isPublished: true
     })
-    .populate('academicSession', 'name year')
-    .populate({
-      path: 'sessions.course',
-      select: 'title code'
-    });
-    
+      .populate('academicSession', 'name year')
+      .populate({
+        path: 'sessions.course',
+        select: 'title code'
+      });
+
     // Filter sessions to only include courses the student is enrolled in
     const studentTimetables = timetables.map(timetable => {
       // Deep clone the timetable object
       const filteredTimetable = JSON.parse(JSON.stringify(timetable));
-      
+
       // Filter sessions for this student's courses
       filteredTimetable.sessions = timetable.sessions.filter(session => {
         // If the course field is populated, check the _id directly
         const courseId = session.course._id || session.course;
         return courseIds.some(id => id.toString() === courseId.toString());
       });
-      
+
       return filteredTimetable;
     }).filter(timetable => timetable.sessions.length > 0); // Only include timetables with matching sessions
-    
+
     res.status(200).json({
       success: true,
       count: studentTimetables.length,
@@ -839,7 +1171,7 @@ exports.getStudentTimetableByAdmin = async (req, res) => {
   try {
     const userId = req.params.userId;
     const User = require('../models/User'); // Import if needed
-    
+
     // Verify user exists
     const userExists = await User.findById(userId);
     if (!userExists) {
@@ -848,45 +1180,45 @@ exports.getStudentTimetableByAdmin = async (req, res) => {
         message: 'User not found'
       });
     }
-    
+
     // Get student profile
     const student = await Student.findOne({ user: userId })
       .populate('courses', '_id title code');
-    
+
     if (!student) {
       return res.status(404).json({
         success: false,
         message: 'Student profile not found'
       });
     }
-    
+
     // Get course IDs enrolled by the student
     const courseIds = student.courses.map(course => course._id);
-    
+
     // Find all published timetables
-    const timetables = await ExamTimetable.find({ 
-      isPublished: true 
+    const timetables = await ExamTimetable.find({
+      isPublished: true
     })
-    .populate('academicSession', 'name year')
-    .populate({
-      path: 'sessions.course',
-      select: 'title code'
-    });
-    
+      .populate('academicSession', 'name year')
+      .populate({
+        path: 'sessions.course',
+        select: 'title code'
+      });
+
     // Filter sessions to only include courses the student is enrolled in
     const studentTimetables = timetables.map(timetable => {
       // Deep clone the timetable object
       const filteredTimetable = JSON.parse(JSON.stringify(timetable));
-      
+
       // Filter sessions for this student's courses
       filteredTimetable.sessions = timetable.sessions.filter(session => {
         const courseId = session.course._id || session.course;
         return courseIds.some(id => id.toString() === courseId.toString());
       });
-      
+
       return filteredTimetable;
     }).filter(timetable => timetable.sessions.length > 0);
-    
+
     res.status(200).json({
       success: true,
       count: studentTimetables.length,

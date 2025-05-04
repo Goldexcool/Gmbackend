@@ -5,34 +5,42 @@ const StudentSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    unique: true
+    required: true
   },
   matricNumber: {
     type: String,
     unique: true,
     sparse: true
   },
-  program: {
+  department: {
     type: String,
-    default: 'Undeclared'  // Provide a default value
+    required: true
   },
-  department: String,
-  faculty: String,
   level: {
-    type: Number,
-    enum: [100, 200, 300, 400, 500, 600],
-    default: 100
-  },
-  semester: {
     type: String,
-    enum: ['first', 'second'],
-    default: 'first'
+    required: true,
+    // Valid academic levels (100, 200, 300, 400, 500, etc.)
+    validate: {
+      validator: function(v) {
+        return /^[1-9][0-9]{2}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid academic level!`
+    }
   },
   courses: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Course'
   }],
+  program: {
+    type: String,
+    default: 'Undeclared'  // Provide a default value
+  },
+  faculty: String,
+  semester: {
+    type: String,
+    enum: ['first', 'second'],
+    default: 'first'
+  },
   connections: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,

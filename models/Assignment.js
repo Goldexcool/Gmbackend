@@ -55,12 +55,12 @@ const assignmentSchema = new Schema({
   academicSession: {
     type: Schema.Types.ObjectId,
     ref: 'AcademicSession',
-    required: true
+    required: false // Changed from true to false
   },
   lecturer: {
     type: Schema.Types.ObjectId,
     ref: 'Lecturer',
-    required: true
+    required: false // Changed from true to false
   },
   dueDate: {
     type: Date,

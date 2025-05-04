@@ -472,18 +472,29 @@ exports.getChatMessages = async (req, res) => {
 exports.sendMessage = async (req, res) => {
   try {
     const { repId } = req.params;
-    const { text } = req.body;
+    const { message } = req.body;
     
-    if (!text || text.trim() === '') {
+    console.log('Request body:', req.body); // Add this for debugging
+    
+    // Validate message - fix the validation check
+    if (!message || typeof message !== 'string' || message.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Message text is required'
       });
     }
     
+    // Find the course rep
+    const courseRep = await CourseRep.findById(repId);
+    if (!courseRep) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course rep not found'
+      });
+    }
+    
     // Find lecturer profile
     const lecturer = await Lecturer.findOne({ user: req.user.id });
-    
     if (!lecturer) {
       return res.status(404).json({
         success: false,
@@ -491,79 +502,94 @@ exports.sendMessage = async (req, res) => {
       });
     }
     
-    // Find the course rep
-    const courseRep = await CourseRep.findOne({
-      _id: repId,
-      assignedBy: lecturer._id
-    });
-    
-    if (!courseRep) {
-      return res.status(404).json({
-        success: false,
-        message: 'Course rep not found or you did not assign this rep'
-      });
-    }
-    
-    // Find or create the chat
+    // Find the chat
     let chat = await CourseRepChat.findOne({
       courseRep: repId,
       lecturer: lecturer._id
     });
     
     if (!chat) {
+      console.log(`Chat not found for rep ${repId}, creating a new one...`);
+      
+      // Get the course for this course rep
+      const course = await Course.findById(courseRep.course);
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: 'Course associated with this rep not found'
+        });
+      }
+      
+      // Create a new chat
       chat = await CourseRepChat.create({
         courseRep: repId,
         lecturer: lecturer._id,
-        course: courseRep.course,
-        messages: []
+        course: course._id,
+        messages: [],
+        isActive: true,
+        lastMessage: null
       });
+      
+      console.log(`Created new chat with ID: ${chat._id}`);
     }
     
-    // Handle file attachments if any
+    // Process attachments if any
     const attachments = [];
     if (req.files && req.files.length > 0) {
       req.files.forEach(file => {
-        const isImage = file.mimetype.startsWith('image/');
-        const isVideo = file.mimetype.startsWith('video/');
-        const isDocument = !isImage && !isVideo;
-        
         attachments.push({
-          url: `/uploads/course-rep-chat/${file.filename}`,
-          filename: file.originalname,
-          mimeType: file.mimetype,
+          filename: file.filename,
+          originalname: file.originalname,
+          mimetype: file.mimetype,
           size: file.size,
-          isImage,
-          isVideo,
-          isDocument
+          path: file.path
         });
       });
     }
     
-    // Add the message
+    // Create new message with required 'text' field instead of 'message'
     const newMessage = {
       sender: req.user.id,
       senderRole: 'lecturer',
-      text,
+      text: message,         // Changed from 'message' to 'text'
       attachments,
-      read: false,
-      createdAt: new Date()
+      createdAt: new Date(),
+      read: false
     };
     
+    // Add message to chat
     chat.messages.push(newMessage);
     
-    // Update lastMessage
+    // Update last message
     chat.lastMessage = {
-      text,
       sender: req.user.id,
+      text: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
       timestamp: new Date(),
       read: false
     };
     
+    // Save the chat
     await chat.save();
+    
+    // Send notification to student course rep
+    const student = await Student.findById(courseRep.student);
+    if (student) {
+      // Create notification
+      const notification = {
+        recipient: student.user,
+        type: 'message',
+        message: `New message from ${req.user.name || 'Lecturer'}`,
+        referenceId: chat._id,
+        referenceModel: 'CourseRepChat'
+      };
+      
+      if (global.models && global.models.Notification) {
+        await global.models.Notification.create(notification);
+      }
+    }
     
     res.status(201).json({
       success: true,
-      message: 'Message sent successfully',
       data: newMessage
     });
   } catch (error) {

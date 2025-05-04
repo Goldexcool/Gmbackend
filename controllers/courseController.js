@@ -1,8 +1,215 @@
+const mongoose = require('mongoose');
 const Course = require('../models/Course');
-const Student = require('../models/Student');
-const Lecturer = require('../models/Lecturer');
 const Department = require('../models/Department');
+const Student = require('../models/Student');
 const AcademicSession = require('../models/AcademicSession');
+const Enrollment = require('../models/Enrollment');
+const Lecturer = require('../models/Lecturer');
+
+/**
+ * Helper function to resolve department ID from name or ID
+ * @param {string} department - Department name or ID
+ * @returns {Promise<string|null>} - Department ID or null if not found
+ */
+const resolveDepartmentId = async (department) => {
+  // If department is missing, return null
+  if (!department) return null;
+  
+  // If it's already a valid ObjectId, return as is
+  if (mongoose.Types.ObjectId.isValid(department)) {
+    return department;
+  }
+  
+  // Otherwise, search by name (case-insensitive)
+  const departmentDoc = await Department.findOne({
+    name: { $regex: new RegExp(`^${department}$`, 'i') }
+  });
+  
+  return departmentDoc ? departmentDoc._id : null;
+};
+
+/**
+ * @desc    Get courses the authenticated user is enrolled in
+ * @route   GET /api/courses/enrolled
+ * @access  Private
+ */
+exports.getEnrolledCourses = async (req, res) => {
+  try {
+    // Get the authenticated user
+    const userId = req.user.id;
+    
+    // Find the student profile for this user
+    const student = await Student.findOne({ user: userId });
+    
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
+    
+    // Find the enrollments for this student separately
+    const enrollments = await Enrollment.find({ 
+      student: student._id,
+      status: 'accepted' // Only include accepted enrollments
+    }).select('course status enrollmentDate grade');
+    
+    if (enrollments.length === 0) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: []
+      });
+    }
+    
+    // Extract course IDs and enrollment info
+    const courseIds = [];
+    const enrollmentInfo = {};
+    
+    enrollments.forEach(enrollment => {
+      const courseId = enrollment.course.toString();
+      courseIds.push(enrollment.course);
+      enrollmentInfo[courseId] = {
+        status: enrollment.status,
+        enrollmentDate: enrollment.enrollmentDate,
+        grade: enrollment.grade
+      };
+    });
+    
+    // Fetch the actual course details
+    const courses = await Course.find({ _id: { $in: courseIds } })
+      .populate('department', 'name code')
+      .populate('lecturer', 'user')
+      .populate({
+        path: 'lecturer',
+        populate: {
+          path: 'user',
+          select: 'fullName email profilePicture'
+        }
+      })
+      .populate('academicSession', 'name year semester isActive');
+    
+    const coursesWithEnrollmentInfo = courses.map(course => {
+      const info = enrollmentInfo[course._id.toString()];
+      return {
+        ...course.toObject(),
+        enrollmentStatus: info.status,
+        enrollmentDate: info.enrollmentDate,
+        grade: info.grade
+      };
+    });
+    
+    // Sort courses by department and code
+    coursesWithEnrollmentInfo.sort((a, b) => {
+      if (a.department?.code === b.department?.code) {
+        return a.code.localeCompare(b.code);
+      }
+      return a.department?.code?.localeCompare(b.department?.code) || 0;
+    });
+    
+    res.status(200).json({
+      success: true,
+      count: coursesWithEnrollmentInfo.length,
+      data: coursesWithEnrollmentInfo
+    });
+  } catch (error) {
+    console.error('Error getting enrolled courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting enrolled courses',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get courses available for enrollment
+ * @route   GET /api/courses/available
+ * @access  Private
+ */
+exports.getAvailableCourses = async (req, res) => {
+  try {
+    // Get the authenticated user
+    const userId = req.user.id;
+    
+    // Find the student profile for this user
+    const student = await Student.findOne({ user: userId });
+    
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
+    
+    // Get current active academic session
+    const activeSession = await AcademicSession.findOne({ isActive: true });
+    
+    if (!activeSession) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active academic session found'
+      });
+    }
+    
+    // Get courses the student is already enrolled in
+    const enrollments = await Enrollment.find({ 
+      student: student._id,
+      status: { $nin: ['rejected', 'canceled'] } // Exclude rejected and canceled enrollments
+    });
+    
+    const enrolledCourseIds = enrollments.map(enrollment => enrollment.course.toString());
+    
+    // Find courses that:
+    // 1. Are in the active academic session
+    // 2. Match student's department or are electives
+    // 3. Match student's level
+    // 4. Student is not already enrolled in
+    const query = {
+      academicSession: activeSession._id,
+      _id: { $nin: enrolledCourseIds }, // Exclude already enrolled courses
+      $or: [
+        { department: student.department }, // Courses from student's department
+        { isElective: true } // Elective courses
+      ],
+      level: student.level // Match student's level
+    };
+    
+    // Fetch available courses
+    const courses = await Course.find(query)
+      .populate('department', 'name code')
+      .populate('lecturer', 'user')
+      .populate({
+        path: 'lecturer',
+        populate: {
+          path: 'user',
+          select: 'fullName email profilePicture'
+        }
+      })
+      .populate('academicSession', 'name year semester');
+    
+    // Sort courses by department and code
+    courses.sort((a, b) => {
+      if (a.department?.code === b.department?.code) {
+        return a.code.localeCompare(b.code);
+      }
+      return a.department?.code?.localeCompare(b.department?.code) || 0;
+    });
+    
+    res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: courses
+    });
+  } catch (error) {
+    console.error('Error getting available courses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting available courses',
+      error: error.message
+    });
+  }
+};
 
 /**
  * @desc    Get all courses
@@ -26,8 +233,28 @@ exports.getAllCourses = async (req, res) => {
     // Build query object
     const query = {};
     
-    // Add filters if provided
-    if (department) query.department = department;
+    // Handle department - accept both ID and name
+    if (department) {
+      const departmentId = await resolveDepartmentId(department);
+      if (departmentId) {
+        query.department = departmentId;
+      } else if (typeof department === 'string') {
+        // If department name wasn't found but was provided, return empty result
+        // This prevents showing all courses when a specific department was requested
+        console.log(`Department not found: ${department}`);
+        return res.status(200).json({
+          success: true,
+          count: 0,
+          total: 0,
+          pages: 0,
+          currentPage: parseInt(page),
+          data: [],
+          message: `No courses found for department: ${department}`
+        });
+      }
+    }
+    
+    // Add other filters
     if (level) query.level = level;
     if (semester) query.semester = semester;
     if (academicSession) query.academicSession = academicSession;
@@ -132,56 +359,133 @@ exports.getCourseById = async (req, res) => {
  */
 exports.createCourse = async (req, res) => {
   try {
-    const {
-      code,
-      title,
-      description,
-      department,
-      level,
+    const { 
+      title, 
+      code, 
+      description, 
+      department, 
+      level, 
+      credits, 
       semester,
-      credits,
-      lecturer,
-      academicSession,
-      prerequisites,
-      isElective
+      academicSession: academicSessionId,
+      isCompulsory = false,
+      lecturerId 
     } = req.body;
-    
-    // Check for duplicate course code
+
+    console.log('Course creation request body:', req.body);
+
+    // Validate required fields
+    if (!title || !code || !level) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide title, code, and level'
+      });
+    }
+
+    // Check if department is missing or empty
+    if (!department) {
+      return res.status(400).json({
+        success: false,
+        message: 'Department is required'
+      });
+    }
+
+    // Check if course code already exists
     const existingCourse = await Course.findOne({ code });
     if (existingCourse) {
       return res.status(400).json({
         success: false,
-        message: `Course with code ${code} already exists`
+        message: 'Course with this code already exists'
       });
     }
+
+    // Find department by ID or name
+    const departmentId = await resolveDepartmentId(department);
     
-    // Create the course
-    const course = await Course.create({
-      code,
-      title,
-      description,
-      department,
-      level,
-      semester,
-      credits,
-      lecturer,
-      academicSession,
-      prerequisites: prerequisites || [],
-      isElective: isElective || false
-    });
-    
-    // If lecturer is assigned, update their courses array
-    if (lecturer) {
-      await Lecturer.findByIdAndUpdate(
-        lecturer,
-        { $addToSet: { courses: course._id } }
-      );
+    if (!departmentId) {
+      return res.status(404).json({
+        success: false,
+        message: `Department "${department}" not found. Please check the department name or ID.`
+      });
     }
-    
+
+    // Find active academic session if none provided
+    let academicSession = academicSessionId;
+    if (!academicSession) {
+      const activeSession = await AcademicSession.findOne({ isActive: true });
+      if (!activeSession) {
+        return res.status(400).json({
+          success: false,
+          message: 'No active academic session found. Please create one before adding courses.'
+        });
+      }
+      academicSession = activeSession._id;
+    }
+
+    // Normalize semester value
+    let normalizedSemester = semester;
+    if (semester) {
+      const semValue = semester.toString().toLowerCase();
+      if (semValue === '1' || semValue === 'first') {
+        normalizedSemester = 'First';
+      } else if (semValue === '2' || semValue === 'second') {
+        normalizedSemester = 'Second';
+      }
+    }
+
+    // Create course data object
+    const courseData = {
+      title,
+      code,
+      description,
+      department: departmentId, // Use the resolved department ID
+      level,
+      credits: credits || 3,
+      semester: normalizedSemester || 'First',
+      academicSession,
+      isCompulsory: isCompulsory === true
+    };
+
+    // Only add lecturer if provided
+    if (lecturerId) {
+      if (Array.isArray(lecturerId)) {
+        courseData.lecturer = lecturerId;
+      } else {
+        courseData.lecturer = [lecturerId];
+      }
+    }
+
+    console.log('Creating course with data:', {
+      ...courseData,
+      department: departmentId.toString() // Convert ObjectId to string for logging
+    });
+
+    // Create the course
+    const course = await Course.create(courseData);
+
+    // If course is compulsory, auto-assign to matching students
+    if (isCompulsory) {
+      const students = await Student.find({ 
+        department: departmentId,
+        level
+      });
+      
+      for (const student of students) {
+        student.courses.push(course._id);
+        await student.save();
+      }
+      
+      console.log(`Auto-assigned course ${course._id} to ${students.length} students`);
+    }
+
+    // Populate the course to show department name in response
+    const populatedCourse = await Course.findById(course._id)
+      .populate('department', 'name code')
+      .populate('academicSession', 'name year');
+
     res.status(201).json({
       success: true,
-      message: 'Course created successfully',
-      data: course
+      data: populatedCourse
     });
   } catch (error) {
     console.error('Error creating course:', error);
@@ -235,6 +539,18 @@ exports.updateCourse = async (req, res) => {
       }
     }
     
+    // Handle department - resolve ID if name provided
+    let departmentId = course.department;
+    if (department) {
+      departmentId = await resolveDepartmentId(department);
+      if (!departmentId) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name or ID.`
+        });
+      }
+    }
+    
     // Handle lecturer change
     const oldLecturer = course.lecturer;
     
@@ -245,7 +561,7 @@ exports.updateCourse = async (req, res) => {
         code: code || course.code,
         title: title || course.title,
         description: description || course.description,
-        department: department || course.department,
+        department: departmentId,
         level: level || course.level,
         semester: semester || course.semester,
         credits: credits || course.credits,
@@ -460,7 +776,18 @@ exports.getCoursesByDepartment = async (req, res) => {
   try {
     const { departmentId } = req.params;
     
-    const courses = await Course.find({ department: departmentId })
+    // Handle both department ID and name
+    const resolvedDepartmentId = await resolveDepartmentId(departmentId);
+    
+    if (!resolvedDepartmentId) {
+      return res.status(404).json({
+        success: false,
+        message: `Department "${departmentId}" not found. Please check the department name or ID.`
+      });
+    }
+    
+    const courses = await Course.find({ department: resolvedDepartmentId })
+      .populate('department', 'name code')
       .populate('lecturer', 'user')
       .populate('lecturer.user', 'name')
       .populate('academicSession', 'name year')
@@ -820,14 +1147,40 @@ exports.bulkCreateCourses = async (req, res) => {
       });
     }
     
+    // Process each course to resolve department names to IDs
+    const processedCourses = [];
+    for (const course of courses) {
+      // Skip if no department provided
+      if (!course.department) {
+        return res.status(400).json({
+          success: false,
+          message: `Department is required for course: ${course.code}`
+        });
+      }
+      
+      // Resolve department ID
+      const departmentId = await resolveDepartmentId(course.department);
+      if (!departmentId) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${course.department}" not found for course: ${course.code}`
+        });
+      }
+      
+      processedCourses.push({
+        ...course,
+        department: departmentId
+      });
+    }
+    
     // Create all courses
-    const createdCourses = await Course.insertMany(courses);
+    const createdCourses = await Course.insertMany(processedCourses);
     
     // Update lecturer references
     const lecturerUpdates = courses
       .filter(c => c.lecturer)
-      .map(c => {
-        const courseObj = createdCourses.find(cc => cc.code === c.code);
+      .map((c, index) => {
+        const courseObj = createdCourses[index];
         return Lecturer.findByIdAndUpdate(
           c.lecturer,
           { $addToSet: { courses: courseObj._id } }

@@ -7,8 +7,11 @@ const StudyGroup = require('../models/StudyGroup');
 const Chat = require('../models/Chat');
 const Course = require('../models/Course');
 const AcademicSession = require('../models/AcademicSession');
+const Department = require('../models/Department');
+const mongoose = require('mongoose');
 const path = require('path');
 const fs = require('fs');
+const { formatDepartmentInfo } = require('../utils/responseHelpers');
 
 // @desc    Get student dashboard data
 // @route   GET /api/students/:id/dashboard
@@ -342,9 +345,14 @@ exports.getStudentProfile = async (req, res) => {
       });
     }
 
+    const formattedDepartment = await formatDepartmentInfo(student.department);
+
     res.status(200).json({
       success: true,
-      data: student
+      data: {
+        student,
+        formattedDepartment
+      }
     });
   } catch (error) {
     console.error(error);
@@ -601,14 +609,49 @@ exports.getCoursesByDepartmentAndLevel = async (req, res) => {
   try {
     const { department, level } = req.query;
     
+    console.log('Requested department and level:', { department, level });
+    
     if (!department || !level) {
       return res.status(400).json({
         success: false,
         message: 'Please provide department and level'
       });
     }
+
+    // Get the student profile
+    const student = await Student.findOne({ user: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
     
-    // Get active academic session
+    console.log('Found student:', { 
+      id: student._id,
+      department: student.department,
+      level: student.level,
+      enrolledCourses: student.courses.length
+    });
+
+    // Find department ID if name is provided
+    let departmentId = department;
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+      
+      if (!departmentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name.`
+        });
+      }
+      
+      departmentId = departmentDoc._id;
+    }
+
+    // Find active academic session
     const activeSession = await AcademicSession.findOne({ isActive: true });
     if (!activeSession) {
       return res.status(404).json({
@@ -616,33 +659,251 @@ exports.getCoursesByDepartmentAndLevel = async (req, res) => {
         message: 'No active academic session found'
       });
     }
-    
-    // Find courses
+
+    // Find courses that match the department and level
+    // IMPORTANT: We're no longer checking if the user is enrolled in these courses
     const courses = await Course.find({
-      department,
+      department: departmentId,
       level,
       academicSession: activeSession._id,
       isActive: true
-    })
-    .populate({
-      path: 'lecturer',
-      select: 'user',
-      populate: {
-        path: 'user',
-        select: 'name'
+    }).populate([
+      { path: 'department', select: 'name code' },
+      { 
+        path: 'lecturer', 
+        select: 'user',
+        populate: { path: 'user', select: 'fullName email' }
+      }
+    ]).sort({ code: 1 });
+
+    // Group courses by semester
+    const bySemester = {
+      First: [],
+      Second: []
+    };
+
+    courses.forEach(course => {
+      if (course.semester === 'First' || course.semester === '1' || course.semester.toLowerCase() === 'first') {
+        bySemester.First.push(course);
+      } else if (course.semester === 'Second' || course.semester === '2' || course.semester.toLowerCase() === 'second') {
+        bySemester.Second.push(course);
       }
     });
+
+    // Mark courses that the student is enrolled in
+    const studentCourseIds = student.courses.map(id => id.toString());
     
+    const coursesWithEnrollmentStatus = courses.map(course => {
+      const courseObj = course.toObject();
+      courseObj.isEnrolled = studentCourseIds.includes(course._id.toString());
+      return courseObj;
+    });
+    
+    // Format the courses by semester with enrollment status
+    const formattedBySemester = {
+      First: bySemester.First.map(course => {
+        const courseObj = course.toObject();
+        courseObj.isEnrolled = studentCourseIds.includes(course._id.toString());
+        return courseObj;
+      }),
+      Second: bySemester.Second.map(course => {
+        const courseObj = course.toObject();
+        courseObj.isEnrolled = studentCourseIds.includes(course._id.toString());
+        return courseObj;
+      })
+    };
+
     res.status(200).json({
       success: true,
       count: courses.length,
-      data: courses
+      data: {
+        courses: coursesWithEnrollmentStatus,
+        bySemester: formattedBySemester
+      }
     });
   } catch (error) {
-    console.error('Error getting department courses:', error);
+    console.error('Error getting courses by department and level:', error);
     res.status(500).json({
       success: false,
-      message: 'Error getting department courses',
+      message: 'Error getting courses by department and level',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get all courses for a department and level (simplified with fallback)
+ * @route   GET /api/student/courses/department-simple
+ * @access  Private/Student
+ */
+exports.getCoursesByDepartmentAndLevelSimple = async (req, res) => {
+  try {
+    const { department, level } = req.query;
+    
+    console.log('Simple endpoint - Request params:', { department, level, userId: req.user.id });
+    
+    if (!department || !level) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide department and level'
+      });
+    }
+    
+    // Find department ID if name is provided
+    let departmentId = department;
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+      
+      if (!departmentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name.`
+        });
+      }
+      
+      departmentId = departmentDoc._id;
+    }
+    
+    // Skip academic session check to see if that's the only issue
+    const courses = await Course.find({
+      department: departmentId,
+      level
+    }).populate('department', 'name code');
+    
+    console.log(`Found ${courses.length} courses for department ${departmentId} and level ${level}`);
+    
+    // If no courses were found but we have a valid department and level, return empty array instead of error
+    if (courses.length === 0) {
+      console.log('No courses found. This could be normal if no courses exist for this criteria.');
+    }
+    
+    return res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: courses,
+      departmentId: departmentId,
+      message: courses.length > 0 
+        ? 'Courses found successfully' 
+        : 'No courses available for this department and level'
+    });
+  } catch (error) {
+    console.error('Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get courses for a specific department and level (with fallback)
+ * @route   GET /api/student/courses/department-fallback
+ * @access  Private/Student
+ */
+exports.getCoursesByDepartmentAndLevelWithFallback = async (req, res) => {
+  try {
+    const { department, level, skipSessionCheck } = req.query;
+    
+    console.log('Fallback endpoint - Request params:', { department, level, skipSessionCheck });
+    
+    if (!department || !level) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide department and level'
+      });
+    }
+
+    // Get the student profile
+    const student = await Student.findOne({ user: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
+
+    // Find department ID if name is provided
+    let departmentId = department;
+    if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+      const departmentDoc = await Department.findOne({
+        name: { $regex: new RegExp(`^${department}$`, 'i') }
+      });
+      
+      if (!departmentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: `Department "${department}" not found. Please check the department name.`
+        });
+      }
+      
+      departmentId = departmentDoc._id;
+    }
+
+    // Find active academic session
+    let activeSession = null;
+    let query = {
+      department: departmentId,
+      level,
+      isActive: true
+    };
+    
+    if (!skipSessionCheck) {
+      activeSession = await AcademicSession.findOne({ isActive: true });
+      if (!activeSession) {
+        // Skip session check if requested
+        if (skipSessionCheck === 'true') {
+          console.log('No active session found, but continuing without session filter');
+        } else {
+          return res.status(404).json({
+            success: false,
+            message: 'No active academic session found'
+          });
+        }
+      } else {
+        query.academicSession = activeSession._id;
+      }
+    }
+
+    // Find courses that match the department and level
+    const courses = await Course.find(query)
+      .populate([
+        { path: 'department', select: 'name code' },
+        { 
+          path: 'lecturer', 
+          select: 'user',
+          populate: { path: 'user', select: 'fullName email' }
+        }
+      ])
+      .sort({ code: 1 });
+
+    // Mark courses that the student is enrolled in
+    const studentCourseIds = student.courses.map(id => id.toString());
+    
+    const coursesWithEnrollmentStatus = courses.map(course => {
+      const courseObj = course.toObject();
+      courseObj.isEnrolled = studentCourseIds.includes(course._id.toString());
+      return courseObj;
+    });
+
+    res.status(200).json({
+      success: true,
+      count: courses.length,
+      data: {
+        courses: coursesWithEnrollmentStatus,
+        departmentId: departmentId,
+        departmentName: typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department) 
+          ? department 
+          : (courses[0]?.department?.name || 'Unknown')
+      }
+    });
+  } catch (error) {
+    console.error('Error getting courses by department and level:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting courses by department and level',
       error: error.message
     });
   }
@@ -810,24 +1071,32 @@ exports.updateStudentProfile = async (req, res) => {
  * @route   GET /api/student/courses
  * @access  Private/Student
  */
-exports.getEnrolledCourses = async (req, res) => {
+exports.getStudentCourses = async (req, res) => {
   try {
-    // Find student profile with populated courses
+    // Get the student profile
     const student = await Student.findOne({ user: req.user.id })
+      .populate({
+        path: 'department',
+        select: 'name code faculty'
+      })
       .populate({
         path: 'courses',
         populate: [
           { 
-            path: 'academicSession',
-            select: 'name year isActive'
+            path: 'department', 
+            select: 'name code faculty' 
           },
-          {
-            path: 'lecturer',
+          { 
+            path: 'lecturer', 
             select: 'user',
-            populate: {
-              path: 'user',
-              select: 'name email'
+            populate: { 
+              path: 'user', 
+              select: 'fullName email' 
             }
+          },
+          { 
+            path: 'academicSession', 
+            select: 'name year semester' 
           }
         ]
       });
@@ -839,95 +1108,54 @@ exports.getEnrolledCourses = async (req, res) => {
       });
     }
     
-    // Get active academic session for filtering
-    const activeSession = await AcademicSession.findOne({ isActive: true });
-    
-    // Process courses to include additional info
-    const processedCourses = await Promise.all(student.courses.map(async (course) => {
-      const courseObj = course.toObject();
-      
-      // Check for course representative
-      const CourseRepresentative = require('../models/CourseRepresentative');
-      const courseRep = await CourseRepresentative.findOne({
-        course: course._id,
-        academicSession: course.academicSession,
-        isActive: true
-      }).populate('student', 'user').populate('student.user', 'name email');
-      
-      // Get assignment stats
-      const Assignment = require('../models/Assignment');
-      const assignments = await Assignment.find({
-        course: course._id,
-        academicSession: course.academicSession,
-        visibleToStudents: true
-      });
-      
-      // Count pending assignments
-      const now = new Date();
-      const pendingAssignments = assignments.filter(assignment => {
-        // Check if student has submitted this assignment
-        const submitted = assignment.submissions.some(
-          sub => sub.student.toString() === student._id.toString()
-        );
-        return !submitted && new Date(assignment.dueDate) > now;
-      }).length;
-      
-      // Count completed assignments
-      const completedAssignments = assignments.filter(assignment => {
-        return assignment.submissions.some(
-          sub => sub.student.toString() === student._id.toString()
-        );
-      }).length;
-      
-      // Count resources
-      const CourseResource = require('../models/CourseResource');
-      const resourceCount = await CourseResource.countDocuments({
-        course: course._id,
-        academicSession: course.academicSession,
-        visibleToStudents: true
-      });
-      
-      // Add additional information
-      courseObj.isCurrentSemester = 
-        activeSession && course.academicSession._id.toString() === activeSession._id.toString();
-      courseObj.courseRepresentative = courseRep ? courseRep.student : null;
-      courseObj.stats = {
-        pendingAssignments,
-        completedAssignments,
-        totalAssignments: assignments.length,
-        resourceCount
+    // Format student department info
+    const formattedStudent = student.toObject();
+    if (formattedStudent.department && typeof formattedStudent.department === 'object') {
+      formattedStudent.departmentInfo = {
+        id: formattedStudent.department._id,
+        name: formattedStudent.department.name,
+        code: formattedStudent.department.code,
+        faculty: formattedStudent.department.faculty
       };
+    }
+    
+    // Group courses by semester and level
+    const coursesByLevel = {};
+    
+    for (const course of formattedStudent.courses) {
+      const levelKey = course.level || 'Other';
+      const semesterKey = course.semester || 'Unknown';
       
-      return courseObj;
-    }));
-    
-    // Group courses by academic session
-    const coursesBySession = {};
-    
-    processedCourses.forEach(course => {
-      const sessionId = course.academicSession._id.toString();
-      if (!coursesBySession[sessionId]) {
-        coursesBySession[sessionId] = {
-          session: course.academicSession,
-          courses: []
-        };
+      if (!coursesByLevel[levelKey]) {
+        coursesByLevel[levelKey] = {};
       }
-      coursesBySession[sessionId].courses.push(course);
-    });
-    
-    // Convert to array for response
-    const coursesResponse = Object.values(coursesBySession);
+      
+      if (!coursesByLevel[levelKey][semesterKey]) {
+        coursesByLevel[levelKey][semesterKey] = [];
+      }
+      
+      coursesByLevel[levelKey][semesterKey].push(course);
+    }
     
     res.status(200).json({
       success: true,
-      count: processedCourses.length,
-      data: coursesResponse
+      count: formattedStudent.courses.length,
+      data: {
+        student: {
+          id: formattedStudent._id,
+          matricNumber: formattedStudent.matricNumber,
+          department: formattedStudent.departmentInfo || formattedStudent.department,
+          level: formattedStudent.level
+        },
+        courses: formattedStudent.courses,
+        organized: coursesByLevel
+      }
     });
   } catch (error) {
-    console.error('Error getting enrolled courses:', error);
+    console.error('Error fetching student courses:', error);
     res.status(500).json({
       success: false,
-      message: 'Error getting enrolled courses',
+      message: 'Error fetching student courses',
       error: error.message
     });
   }
@@ -1086,6 +1314,232 @@ exports.getCourseDetails = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error getting course details',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get tasks for a student
+ * @route   GET /api/student/tasks
+ * @access  Private/Student
+ */
+exports.getStudentTasks = async (req, res) => {
+  try {
+    // Find student profile
+    const student = await Student.findOne({ user: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
+    
+    // Get query parameters for filtering
+    const { status, priority, courseId, search } = req.query;
+    
+    // Build query
+    const query = { 
+      $or: [
+        { createdBy: req.user.id },
+        { assignedTo: req.user.id },
+        { visibleToStudents: true, course: { $in: student.courses } }
+      ]
+    };
+    
+    // Add filters
+    if (status) {
+      query.status = status;
+    }
+    
+    if (priority) {
+      query.priority = priority;
+    }
+    
+    if (courseId) {
+      query.course = courseId;
+    }
+    
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Get tasks
+    const tasks = await Task.find(query)
+      .populate('course', 'code title')
+      .populate('createdBy', 'fullName email profilePicture')
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      count: tasks.length,
+      data: tasks
+    });
+  } catch (error) {
+    console.error('Error fetching student tasks:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching student tasks',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get task details
+ * @route   GET /api/student/tasks/:id
+ * @access  Private/Student
+ */
+exports.getTaskDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find student profile
+    const student = await Student.findOne({ user: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
+    
+    // Get task with detailed information
+    const task = await Task.findById(id)
+      .populate('course', 'code title')
+      .populate('createdBy', 'fullName email profilePicture')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'user',
+          select: 'fullName email profilePicture role'
+        }
+      });
+    
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found'
+      });
+    }
+    
+    // Check if student has access to this task
+    const hasAccess = 
+      task.createdBy.toString() === req.user.id || 
+      task.assignedTo?.toString() === req.user.id ||
+      (task.visibleToStudents && student.courses.some(c => c.toString() === task.course?.toString()));
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have access to this task'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: task
+    });
+  } catch (error) {
+    console.error('Error fetching task details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching task details',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Add comment to a task
+ * @route   POST /api/student/tasks/:id/comments
+ * @access  Private/Student
+ */
+exports.addTaskComment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+    
+    // Validate input
+    if (!text) {
+      return res.status(400).json({
+        success: false,
+        message: 'Comment text is required'
+      });
+    }
+    
+    // Find task
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found'
+      });
+    }
+    
+    // Check if student has access to this task
+    const student = await Student.findOne({ user: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found'
+      });
+    }
+    
+    const hasAccess = 
+      task.createdBy.toString() === req.user.id || 
+      task.assignedTo?.toString() === req.user.id ||
+      (task.visibleToStudents && student.courses.some(c => c.toString() === task.course?.toString()));
+    
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have access to comment on this task'
+      });
+    }
+    
+    // Process attachments if any
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      attachments.push(...req.files.map(file => ({
+        filename: file.filename,
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        path: file.path
+      })));
+    }
+    
+    // Add comment
+    const comment = {
+      user: req.user.id,
+      text,
+      attachments,
+      createdAt: Date.now()
+    };
+    
+    task.comments.push(comment);
+    await task.save();
+    
+    // Fetch the populated comment
+    const updatedTask = await Task.findById(id).populate({
+      path: 'comments.user',
+      select: 'fullName email profilePicture role'
+    });
+    
+    const newComment = updatedTask.comments[updatedTask.comments.length - 1];
+    
+    res.status(201).json({
+      success: true,
+      data: newComment
+    });
+  } catch (error) {
+    console.error('Error adding comment to task:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error adding comment to task',
       error: error.message
     });
   }

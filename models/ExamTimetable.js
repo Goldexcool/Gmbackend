@@ -64,7 +64,7 @@ const examTimetableSchema = new mongoose.Schema({
   examType: {
     type: String,
     required: true,
-    enum: ['Mid-Semester', 'End-Semester', 'Supplementary', 'Special']
+    enum: ['Mid-Semester', 'Final', 'Supplementary', 'Special']
   },
   startDate: {
     type: Date,

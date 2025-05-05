@@ -1,28 +1,23 @@
 const mongoose = require('mongoose');
 
 const ConversationSchema = new mongoose.Schema({
-  title: String,
-  user: {
+  participants: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  messages: [{
-    role: String,
-    content: String,
-    timestamp: {
-      type: Date,
-      default: Date.now
-    }
+    ref: 'User'
   }],
   connection: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Connection'
+    ref: 'Connection',
+    sparse: true
   },
-  model: String,
-  lastUpdated: {
-    type: Date,
-    default: Date.now
+  lastMessage: {
+    sender: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    text: String,
+    read: Boolean,
+    timestamp: Date
   },
   isActive: {
     type: Boolean,
@@ -31,20 +26,5 @@ const ConversationSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
-
-// Drop the existing compound index
-mongoose.connection.once('open', async () => {
-  try {
-    await mongoose.connection.db.collection('conversations').dropIndex('user_1_connection_1');
-    console.log('Dropped compound index');
-  } catch (error) {
-    // Index might not exist yet, which is fine
-    console.log('Note: compound index may not exist yet');
-  }
-});
-
-// Create a single-field sparse unique index on connection
-// This only enforces uniqueness for non-null values
-ConversationSchema.index({ connection: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Conversation', ConversationSchema);

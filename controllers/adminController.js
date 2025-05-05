@@ -815,6 +815,11 @@ exports.getAllUsers = async (req, res) => {
  * @route   GET /api/admin/users/:id
  * @access  Private/Admin
  */
+/**
+ * @desc    Get user by ID
+ * @route   GET /api/admin/users/:id
+ * @access  Private/Admin
+ */
 exports.getUserById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -833,13 +838,58 @@ exports.getUserById = async (req, res) => {
     let roleData = null;
     
     if (user.role === 'student') {
+      // For students, get their department and course details
       roleData = await Student.findOne({ user: id })
-        .populate('department', 'name code')
-        .populate('courses', 'code title');
+        .populate({
+          path: 'department',
+          select: 'name code faculty',
+          model: 'Department'
+        })
+        .populate({
+          path: 'courses',
+          select: 'code title credits level',
+          model: 'Course'
+        });
+      
+      // Double-check that department is populated correctly
+      if (roleData && roleData.department && typeof roleData.department === 'object') {
+        console.log("Student department populated:", roleData.department);
+      } else if (roleData && roleData.department) {
+        // If department exists but isn't populated, fetch manually
+        const department = await Department.findById(roleData.department)
+          .select('name code faculty');
+        
+        // Assign the department details
+        roleData = roleData.toObject();
+        roleData.department = department;
+      }
+      
     } else if (user.role === 'lecturer') {
+      // For lecturers, get their department and course details
       roleData = await Lecturer.findOne({ user: id })
-        .populate('department', 'name code')
-        .populate('courses', 'code title');
+        .populate({
+          path: 'department',
+          select: 'name code faculty',
+          model: 'Department'
+        })
+        .populate({
+          path: 'courses',
+          select: 'code title credits level',
+          model: 'Course'
+        });
+      
+      // Double-check that department is populated correctly
+      if (roleData && roleData.department && typeof roleData.department === 'object') {
+        console.log("Lecturer department populated:", roleData.department);
+      } else if (roleData && roleData.department) {
+        // If department exists but isn't populated, fetch manually
+        const department = await Department.findById(roleData.department)
+          .select('name code faculty');
+        
+        // Assign the department details
+        roleData = roleData.toObject();
+        roleData.department = department;
+      }
     }
     
     res.status(200).json({

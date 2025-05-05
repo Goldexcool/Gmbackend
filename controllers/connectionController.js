@@ -564,81 +564,62 @@ exports.removeConnection = async (req, res) => {
  */
 exports.getMyConversations = async (req, res) => {
   try {
-    // Make sure the user exists
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Check what fields are available in the Conversation schema
-    const schemaFields = Object.keys(conversationSchema.paths);
-    console.log('Available fields in Conversation schema:', schemaFields);
-
-    // Determine the correct field name for participants
-    let participantsField = 'participants';
-    if (!schemaFields.includes('participants')) {
-      // Look for alternatives like 'users', 'members', etc.
-      const possibleFields = ['users', 'members', 'people', 'user_ids'];
-      for (const field of possibleFields) {
-        if (schemaFields.includes(field)) {
-          participantsField = field;
-          console.log(`Using ${field} instead of participants`);
-          break;
+    console.log('Getting conversations for user:', req.user.id);
+    
+    // Find conversations where the current user is a participant
+    const conversations = await Conversation.find({
+      participants: req.user.id
+    }).sort('-updatedAt');
+    
+    console.log(`Found ${conversations.length} conversations for user ${req.user.id}`);
+    
+    // Format with additional details
+    const formattedConversations = await Promise.all(conversations.map(async (conversation) => {
+      // Find the other participant's ID
+      let otherParticipantId = null;
+      if (conversation.participants && Array.isArray(conversation.participants)) {
+        // Find the ID that isn't the current user's ID
+        for (const participantId of conversation.participants) {
+          if (participantId.toString() !== req.user.id) {
+            otherParticipantId = participantId;
+            break;
+          }
         }
       }
-    }
-
-    const query = {};
-    query[participantsField] = req.user.id;
-
-    const populateOptions = [];
-    
-    if (schemaFields.includes(participantsField)) {
-      populateOptions.push({
-        path: participantsField,
-        select: 'fullName email profileImage avatar',
-        match: { _id: { $ne: req.user.id } },
-        strictPopulate: false
-      });
-    }
-    
-    if (schemaFields.includes('lastMessage')) {
-      populateOptions.push({
-        path: 'lastMessage',
-        strictPopulate: false
-      });
-    }
-    
-    if (schemaFields.includes('connection')) {
-      populateOptions.push({
-        path: 'connection',
-        strictPopulate: false
-      });
-    }
-
-    const conversations = await Conversation.find(query)
-      .populate(populateOptions)
-      .sort({ updatedAt: -1 });
-    
-    const formattedConversations = conversations.map(conversation => {
-      let otherParticipant = null;
-      if (conversation[participantsField] && Array.isArray(conversation[participantsField])) {
-        const participants = conversation[participantsField].filter(p => p && p._id);
-        otherParticipant = participants.length > 0 ? participants[0] : null;
+      
+      // Get other participant's details
+      let otherUser = null;
+      if (otherParticipantId) {
+        otherUser = await User.findById(otherParticipantId)
+          .select('fullName email profileImage avatar');
+          
+        console.log(`Found other user: ${otherUser ? otherUser.fullName : 'null'}`);
       }
+      
+      // Get unread message count
+      const unreadCount = await Message.countDocuments({
+        conversation: conversation._id,
+        sender: { $ne: req.user.id },
+        read: false
+      });
       
       return {
         id: conversation._id,
-        otherUser: otherParticipant,
+        title: conversation.title || 'Untitled Conversation',
+        otherUser,
         lastMessage: conversation.lastMessage,
+        lastUpdated: conversation.lastMessage ? conversation.lastMessage.timestamp : conversation.updatedAt,
         updatedAt: conversation.updatedAt,
-        unreadCount: 0, 
+        unreadCount,
+        isActive: conversation.isActive,
         connection: conversation.connection
       };
-    });
+    }));
+    
+    // Sort by most recent first
+    formattedConversations.sort((a, b) => 
+      new Date(b.lastUpdated) - new Date(a.lastUpdated)
+    );
     
     res.status(200).json({
       success: true,
@@ -655,9 +636,8 @@ exports.getMyConversations = async (req, res) => {
   }
 };
 
-// @desc    Get messages for a conversation
-// @route   GET /api/connections/conversations/:conversationId/messages
-// @access  Private
+
+
 exports.getConversationMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
@@ -674,7 +654,14 @@ exports.getConversationMessages = async (req, res) => {
     }
     
     // Check if user is a participant in the conversation
-    if (!conversation.participants || !conversation.participants.includes(req.user.id)) {
+    const isParticipant = conversation.participants.some(
+      p => p.toString() === req.user.id
+    );
+    
+    if (!isParticipant) {
+      console.log('User not authorized:', req.user.id);
+      console.log('Conversation participants:', conversation.participants);
+      
       return res.status(403).json({
         success: false,
         message: 'You are not authorized to access this conversation'
@@ -688,7 +675,7 @@ exports.getConversationMessages = async (req, res) => {
     const messages = await Message.find({
       conversation: conversationId
     })
-      .populate('sender', 'fullName avatar')
+      .populate('sender', 'fullName avatar profileImage')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -709,7 +696,6 @@ exports.getConversationMessages = async (req, res) => {
       
       // If the last message was unread, update conversation's lastMessage.read
       if (conversation.lastMessage && 
-          conversation.lastMessage.sender && 
           conversation.lastMessage.sender.toString() !== req.user.id && 
           !conversation.lastMessage.read) {
         conversation.lastMessage.read = true;
@@ -721,15 +707,15 @@ exports.getConversationMessages = async (req, res) => {
     const total = await Message.countDocuments({ conversation: conversationId });
     
     // Get the other participant
-    const otherParticipant = conversation.participants && conversation.participants.find(
+    const otherParticipantId = conversation.participants.find(
       p => p.toString() !== req.user.id
     );
     
     // Get other participant's details if available
-    let participantInfo = null;
-    if (otherParticipant) {
-      participantInfo = await User.findById(otherParticipant)
-        .select('fullName email profileImage');
+    let otherUser = null;
+    if (otherParticipantId) {
+      otherUser = await User.findById(otherParticipantId)
+        .select('fullName email profileImage avatar');
     }
     
     res.status(200).json({
@@ -742,7 +728,7 @@ exports.getConversationMessages = async (req, res) => {
       },
       data: {
         messages,
-        otherParticipant: participantInfo
+        otherUser
       }
     });
   } catch (error) {
@@ -901,210 +887,118 @@ exports.markMessageAsRead = async (req, res) => {
 };
 
 /**
- * @desc    Advanced search for students by name or matriculation number
+ * @desc    Advanced search for students by name, department, or level
  * @route   GET /api/connections/search
  * @access  Private
  */
 exports.searchStudents = async (req, res) => {
   try {
-    const { query, type, department, level, page = 1, limit = 20 } = req.query;
+    const { query, department, level } = req.query;
     
-    if (!query || query.trim() === '') {
+    // Build search criteria
+    const searchCriteria = {
+      role: 'student', // Only search for students
+      _id: { $ne: req.user.id } // Exclude current user
+    };
+    
+    // If neither query, department, or level is provided, require at least one
+    if (!query && !department && !level) {
       return res.status(400).json({
         success: false,
-        message: 'Search query is required'
+        message: 'At least one search parameter is required (query, department, or level)'
       });
     }
     
-    // Get current user's student information
-    const currentUserStudent = await Student.findOne({ user: req.user.id });
-    
-    // Calculate pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    // Build the search pipeline
-    const searchPipeline = [];
-    
-    // First stage: Match either by matricNumber or lookup user by name
-    if (type === 'matricNumber') {
-      // Exact match for matric number
-      searchPipeline.push({
-        $match: {
-          matricNumber: { $regex: new RegExp(`^${query}$`, 'i') }
-        }
-      });
-    } else {
-      // Use lookup to join with users collection for name search
-      searchPipeline.push(
-        {
-          $lookup: {
-            from: 'users',
-            localField: 'user',
-            foreignField: '_id',
-            as: 'userInfo'
-          }
-        },
-        {
-          $unwind: '$userInfo'
-        },
-        {
-          $match: {
-            'userInfo.fullName': { $regex: query, $options: 'i' }
-          }
-        }
-      );
+    // Add name search if query is provided
+    if (query) {
+      searchCriteria.$or = [
+        { fullName: { $regex: query, $options: 'i' } },
+        { matricNumber: { $regex: query, $options: 'i' } }
+      ];
     }
     
-    // Filter by department if provided
-    if (department) {
-      searchPipeline.push({
-        $match: { department: mongoose.Types.ObjectId(department) }
-      });
-    }
-    
-    // Filter by level if provided
+    // Add level filter if provided
     if (level) {
-      searchPipeline.push({
-        $match: { level: parseInt(level) }
-      });
+      searchCriteria.level = level;
     }
     
-    // Exclude current user
-    searchPipeline.push({
-      $match: {
-        user: { $ne: mongoose.Types.ObjectId(req.user.id) }
-      }
-    });
+    console.log('Search criteria:', searchCriteria);
     
-    // Add lookup for department
-    searchPipeline.push({
-      $lookup: {
-        from: 'departments',
-        localField: 'department',
-        foreignField: '_id',
-        as: 'departmentInfo'
-      }
-    });
+    // Find students based on search criteria (without populating department)
+    const students = await User.find(searchCriteria)
+      .select('fullName email profileImage avatar level bio interests skills');
     
-    // Add lookup for user details if not already done
-    if (type === 'matricNumber') {
-      searchPipeline.push({
-        $lookup: {
-          from: 'users',
-          localField: 'user',
-          foreignField: '_id',
-          as: 'userInfo'
-        }
+    console.log(`Found ${students.length} students matching criteria`);
+    
+    // If department filter is needed, filter students after fetching
+    let filteredStudents = students;
+    if (department) {
+      // Look up student records with this department
+      const studentRecords = await Student.find({ 
+        department: department,
+        user: { $in: students.map(s => s._id) }
       });
       
-      searchPipeline.push({
-        $unwind: '$userInfo'
-      });
-    }
-    
-    // Count total results (for pagination)
-    const countPipeline = [...searchPipeline];
-    countPipeline.push({ $count: 'total' });
-    
-    // Add pagination to search pipeline
-    searchPipeline.push(
-      { $skip: skip },
-      { $limit: parseInt(limit) }
-    );
-    
-    // Format output
-    searchPipeline.push({
-      $project: {
-        _id: 1,
-        matricNumber: 1,
-        level: 1,
-        user: '$userInfo._id',
-        fullName: '$userInfo.fullName',
-        email: '$userInfo.email',
-        avatar: '$userInfo.avatar',
-        bio: '$userInfo.bio',
-        connectionCount: '$userInfo.connectionCount',
-        department: { $arrayElemAt: ['$departmentInfo._id', 0] },
-        departmentName: { $arrayElemAt: ['$departmentInfo.name', 0] },
-        createdAt: 1
-      }
-    });
-    
-    // Execute the search query
-    const students = await Student.aggregate(searchPipeline);
-    
-    // Execute count query
-    const countResult = await Student.aggregate(countPipeline);
-    const total = countResult.length > 0 ? countResult[0].total : 0;
-    
-    // Get student IDs for connection lookup
-    const studentUserIds = students.map(student => student.user);
-    
-    // Get connections between current user and search results
-    const connections = await Connection.find({
-      $or: [
-        { requester: req.user.id, recipient: { $in: studentUserIds } },
-        { recipient: req.user.id, requester: { $in: studentUserIds } }
-      ]
-    });
-    
-    // Format search results with connection status
-    const formattedResults = students.map(student => {
-      // Find connection with this student if it exists
-      const connection = connections.find(conn => 
-        (conn.requester.toString() === req.user.id && conn.recipient.toString() === student.user.toString()) || 
-        (conn.recipient.toString() === req.user.id && conn.requester.toString() === student.user.toString())
+      // Get list of user IDs with matching department
+      const userIdsWithDept = studentRecords.map(s => s.user.toString());
+      
+      // Filter the students list
+      filteredStudents = students.filter(s => 
+        userIdsWithDept.includes(s._id.toString())
       );
-      
-      // Determine if they're in the same department
-      const sameDepartment = currentUserStudent && student.department && 
-        currentUserStudent.department.toString() === student.department.toString();
-      
-      return {
-        _id: student._id,
-        user: {
-          _id: student.user,
-          fullName: student.fullName,
-          email: student.email,
-          avatar: student.avatar,
-          bio: student.bio,
-          connectionCount: student.connectionCount
-        },
-        matricNumber: student.matricNumber,
-        level: student.level,
-        department: student.departmentName,
-        sameDepartment,
-        connectionStatus: connection ? {
-          connectionId: connection._id,
-          status: connection.status,
-          requestSent: connection.requester.toString() === req.user.id,
-          requestReceived: connection.recipient.toString() === req.user.id
-        } : null
-      };
+    }
+    
+    // Get department info separately if needed
+    const studentIds = filteredStudents.map(s => s._id);
+    const studentDepartments = await Student.find({
+      user: { $in: studentIds }
+    }).populate('department', 'name').select('user department');
+    
+    // Create a map of user ID to department
+    const departmentMap = {};
+    studentDepartments.forEach(record => {
+      if (record.department) {
+        departmentMap[record.user.toString()] = {
+          name: record.department.name,
+          id: record.department._id
+        };
+      }
     });
+    
+    // Format the response
+    const formattedStudents = filteredStudents.map(student => ({
+      id: student._id,
+      fullName: student.fullName,
+      email: student.email,
+      profileImage: student.profileImage,
+      avatar: student.avatar,
+      department: departmentMap[student._id.toString()] ? 
+        departmentMap[student._id.toString()].name : null,
+      departmentId: departmentMap[student._id.toString()] ? 
+        departmentMap[student._id.toString()].id : null,
+      level: student.level,
+      bio: student.bio,
+      interests: student.interests,
+      skills: student.skills
+    }));
     
     res.status(200).json({
       success: true,
-      count: formattedResults.length,
-      pagination: {
-        total,
-        page: parseInt(page),
-        pages: Math.ceil(total / parseInt(limit))
-      },
-      data: formattedResults
+      count: formattedStudents.length,
+      data: formattedStudents
     });
   } catch (error) {
-    console.error('Error searching for students:', error);
+    console.error('Error searching students:', error);
     res.status(500).json({
       success: false,
-      message: 'Error searching for students',
+      message: 'Error searching students',
       error: error.message
     });
   }
 };
 
 /**
- * @desc    Get student profile with connection status
+ * @desc    Get detailed student profile
  * @route   GET /api/connections/student/:studentId
  * @access  Private
  */
@@ -1112,59 +1006,75 @@ exports.getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    // Find student by ID
-    const student = await Student.findById(studentId)
-      .populate('user', 'fullName email avatar bio connectionCount')
-      .populate('department', 'name');
+    // Log the requested student ID
+    console.log('Looking up student profile for ID:', studentId);
+    
+    // Validate ID format
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid student ID format'
+      });
+    }
+    
+    // Find the user without populating department
+    const student = await User.findById(studentId)
+      .select('-password -verificationToken -resetPasswordToken -resetPasswordExpire');
     
     if (!student) {
+      console.log(`Student not found for ID: ${studentId}`);
       return res.status(404).json({
         success: false,
         message: 'Student not found'
       });
     }
     
-    // Check if there's a connection between the users
+    // Find the student record to get department info
+    const studentRecord = await Student.findOne({ user: studentId })
+      .populate('department', 'name');
+    
+    // Check if requesting user has a connection with this student
+    let connectionStatus = null;
+    let connectionId = null;
+    
+    // Find existing connection
     const connection = await Connection.findOne({
       $or: [
-        { requester: req.user.id, recipient: student.user._id },
-        { recipient: req.user.id, requester: student.user._id }
+        { requester: req.user.id, recipient: studentId },
+        { requester: studentId, recipient: req.user.id }
       ]
     });
     
-    // Get current user's student record
-    const currentUserStudent = await Student.findOne({ user: req.user.id });
+    if (connection) {
+      connectionStatus = connection.status;
+      connectionId = connection._id;
+    }
     
-    // Determine if they're in the same department
-    const sameDepartment = currentUserStudent && student.department && 
-      currentUserStudent.department.toString() === student.department._id.toString();
-    
-    // Format response
-    const profileData = {
-      _id: student._id,
-      user: {
-        _id: student.user._id,
-        fullName: student.user.fullName,
-        email: student.user.email,
-        avatar: student.user.avatar,
-        bio: student.user.bio,
-        connectionCount: student.user.connectionCount
-      },
-      matricNumber: student.matricNumber,
+    // Format the response
+    const formattedProfile = {
+      id: student._id,
+      fullName: student.fullName,
+      email: student.email,
+      profileImage: student.profileImage,
+      avatar: student.avatar,
+      department: studentRecord && studentRecord.department ? 
+        studentRecord.department.name : null,
+      departmentId: studentRecord && studentRecord.department ? 
+        studentRecord.department._id : null,
       level: student.level,
-      department: student.department ? student.department.name : null,
-      sameDepartment,
-      connectionStatus: connection ? {
-        connectionId: connection._id,
-        status: connection.status,
-        requestSent: connection.requester.toString() === req.user.id,
-        requestReceived: connection.recipient.toString() === req.user.id
-      } : null
+      bio: student.bio,
+      interests: student.interests,
+      skills: student.skills,
+      projects: student.projects,
+      achievements: student.achievements,
+      socials: student.socials,
+      connectionStatus,
+      connectionId
     };
     
     res.status(200).json({
       success: true,
-      data: profileData
+      data: formattedProfile
     });
   } catch (error) {
     console.error('Error getting student profile:', error);
@@ -1177,21 +1087,29 @@ exports.getStudentProfile = async (req, res) => {
 };
 
 /**
- * @desc    Get departments list for search filtering
+ * @desc    Get departments for search filters
  * @route   GET /api/connections/departments
  * @access  Private
  */
 exports.getDepartmentsForSearch = async (req, res) => {
   try {
-    const departments = await Department.find()
+    // Find all departments
+    const departments = await Department.find({})
       .select('name code faculty')
-      .populate('faculty', 'name')
       .sort('name');
+    
+    // Format the response
+    const formattedDepartments = departments.map(dept => ({
+      id: dept._id,
+      name: dept.name,
+      code: dept.code,
+      faculty: dept.faculty
+    }));
     
     res.status(200).json({
       success: true,
-      count: departments.length,
-      data: departments
+      count: formattedDepartments.length,
+      data: formattedDepartments
     });
   } catch (error) {
     console.error('Error getting departments:', error);

@@ -7,11 +7,10 @@ const fileUpload = require('../middleware/fileUpload');
 // Apply auth middleware to all routes
 router.use(protect);
 
-// Connection suggestions and management
+router.post('/request/:userId', connectionController.sendConnectionRequest);
 router.get('/suggestions', connectionController.getConnectionSuggestions);
 router.get('/requests', connectionController.getConnectionRequests);
 router.get('/my-connections', connectionController.getMyConnections);
-router.post('/request/:userId', connectionController.sendConnectionRequest);
 router.put('/accept/:connectionId', connectionController.acceptConnectionRequest);
 router.put('/reject/:connectionId', connectionController.rejectConnectionRequest);
 router.delete('/:connectionId', connectionController.removeConnection);

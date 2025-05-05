@@ -224,25 +224,33 @@ exports.getMyConnections = async (req, res) => {
 exports.sendConnectionRequest = async (req, res) => {
   try {
     const { userId } = req.params;
+    const { message } = req.body;
     
-    // Check if trying to connect with self
-    if (userId === req.user.id) {
+    // Validate userId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({
         success: false,
-        message: 'You cannot connect with yourself'
+        message: 'Invalid user ID format'
       });
     }
     
-    // Check if recipient exists
-    const recipient = await User.findById(userId);
-    if (!recipient) {
+    if (userId === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot send a connection request to yourself'
+      });
+    }
+    
+    // Check if user exists
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
     
-    // Check if a connection already exists between the users
+    // Check if connection already exists
     const existingConnection = await Connection.findOne({
       $or: [
         { requester: req.user.id, recipient: userId },
@@ -253,32 +261,22 @@ exports.sendConnectionRequest = async (req, res) => {
     if (existingConnection) {
       return res.status(400).json({
         success: false,
-        message: 'A connection request already exists between these users',
-        data: {
-          connectionId: existingConnection._id,
-          status: existingConnection.status
-        }
+        message: 'Connection request already exists or you are already connected'
       });
     }
     
     // Create connection request
-    const connection = await Connection.create({
+    const connection = new Connection({
       requester: req.user.id,
       recipient: userId,
       status: 'pending',
-      requestDate: Date.now()
+      message: message || ''
     });
     
-    // Add to recipient's connection requests
-    await User.findByIdAndUpdate(userId, {
-      $push: { connectionRequests: { user: req.user.id, requestDate: Date.now() } }
-    });
+    await connection.save();
     
-    // Populate user data for response
-    await connection.populate([
-      { path: 'requester', select: 'fullName email avatar' },
-      { path: 'recipient', select: 'fullName email avatar' }
-    ]);
+    // Notify the recipient about the connection request
+    // (code for notification would go here)
     
     res.status(201).json({
       success: true,

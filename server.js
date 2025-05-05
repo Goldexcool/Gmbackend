@@ -35,7 +35,7 @@ const timetableRoutes = require('./routes/timetableRoutes');
 const academicSessionRoutes = require('./routes/academicSessionRoutes');
 const assignmentRoutes = require('./routes/assignmentRoutes');
 const taskRoutes = require('./routes/taskRoutes');
-
+const connectionRoutes = require('./routes/connectionRoutes'); 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
 
@@ -115,6 +115,7 @@ app.use('/api/courses', courseRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/lecturers', require('./routes/lecturerRoutes'));
+app.use('/api/connections', connectionRoutes); // Added connectionRoutes
 // Root route
 app.get('/', (req, res) => {
   res.send('GEM-SPACE API is running');

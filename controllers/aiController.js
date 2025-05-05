@@ -1,11 +1,12 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const { textModel, complexModel } = require('../utils/aiModels');
+const Conversation = require('../models/Conversation'); 
 
-// Correct API version from test results
-const API_VERSION = "v1beta"; // This is what's working with your models
+const API_VERSION = "v1beta"; 
 
 let pdfParse;
 let mammoth;
@@ -730,7 +731,7 @@ exports.quickChat = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error in quickChat:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -739,7 +740,7 @@ exports.quickChat = async (req, res) => {
   }
 };
 
-// @desc    Start a new conversation with name generation
+// @desc    Start a new AI conversation
 // @route   POST /api/ai/conversations/start
 // @access  Private
 exports.startConversation = async (req, res) => {
@@ -756,6 +757,8 @@ exports.startConversation = async (req, res) => {
     // Select model
     const model = useComplexModel ? complexModel : textModel;
     const modelName = useComplexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+    
+    console.log(`Starting conversation with model: ${modelName}`);
     
     // Generate AI response
     const result = await model.generateContent(message);
@@ -792,6 +795,7 @@ exports.startConversation = async (req, res) => {
     });
     
     await newConversation.save();
+    console.log('New conversation saved:', newConversation._id);
     
     res.status(201).json({
       success: true,
@@ -808,6 +812,121 @@ exports.startConversation = async (req, res) => {
     });
   } catch (error) {
     console.error('Error starting conversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Continue an AI conversation
+// @route   POST /api/ai/conversations/:conversationId/continue
+// @access  Private
+exports.continueAiConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { message, useComplexModel } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a message'
+      });
+    }
+    
+    // Find the conversation by ID and user
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: req.user.id
+    });
+    
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found or you do not have permission to access it'
+      });
+    }
+    
+    // Determine which model to use - either from the request, or use the one from the conversation
+    // Fix: Safely check the model field type and value
+    let modelToUse;
+    if (useComplexModel !== undefined) {
+      // Use what was requested in this call
+      modelToUse = useComplexModel ? complexModel : textModel;
+    } else {
+      // Use what's stored in the conversation
+      // Safely check the model field which might be string or undefined
+      const modelName = typeof conversation.model === 'string' ? conversation.model : 'gemini-1.5-flash';
+      modelToUse = modelName.includes('pro') ? complexModel : textModel;
+    }
+    
+    const modelName = modelToUse === complexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+    
+    // Ensure messages array exists
+    if (!Array.isArray(conversation.messages)) {
+      conversation.messages = [];
+    }
+    
+    // Format conversation history for Gemini API
+    const chatHistory = conversation.messages.map(msg => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }]
+    }));
+    
+    // Start chat with existing history
+    const chat = modelToUse.startChat({
+      history: chatHistory,
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 1024,
+      }
+    });
+    
+    // Add user message to conversation
+    conversation.messages.push({
+      role: 'user',
+      content: message,
+      timestamp: new Date()
+    });
+    
+    // Get response from AI
+    console.log(`Sending message to AI with model: ${modelName}`);
+    const result = await chat.sendMessage(message);
+    const response = await result.response;
+    const aiReply = response.text();
+    
+    // Add AI response to conversation
+    conversation.messages.push({
+      role: 'assistant',
+      content: aiReply,
+      timestamp: new Date()
+    });
+    
+    // Update conversation metadata
+    conversation.lastUpdated = new Date();
+    conversation.model = modelName; // Update the model if it changed
+    
+    // Save the updated conversation
+    await conversation.save();
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        conversation: {
+          id: conversation._id,
+          title: conversation.title,
+          messages: conversation.messages,
+          lastUpdated: conversation.lastUpdated,
+          model: modelName
+        },
+        latestMessage: aiReply
+      }
+    });
+  } catch (error) {
+    console.error('Error continuing AI conversation:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -887,13 +1006,13 @@ exports.getConversation = async (req, res) => {
   }
 };
 
-// @desc    Continue an existing conversation
-// @route   POST /api/ai/conversations/:conversationId/continue
+// @desc    Continue conversation
+// @route   POST /api/conversations/:conversationId/messages
 // @access  Private
 exports.continueConversation = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const { message, useComplexModel } = req.body;
+    const { message } = req.body;
     
     if (!message) {
       return res.status(400).json({
@@ -902,84 +1021,71 @@ exports.continueConversation = async (req, res) => {
       });
     }
     
-    // Find the conversation by ID and user
-    const conversation = await Conversation.findOne({
-      _id: conversationId,
-      user: req.user.id
-    });
+    // Find conversation
+    const conversation = await Conversation.findById(conversationId);
     
     if (!conversation) {
       return res.status(404).json({
         success: false,
-        message: 'Conversation not found or you do not have permission to access it'
+        message: 'Conversation not found'
       });
     }
     
-    // Determine which model to use - either from the request, or use the one from the conversation
-    const modelToUse = useComplexModel !== undefined ? 
-      (useComplexModel ? complexModel : textModel) : 
-      (conversation.model === 'gemini-1.5-pro' ? complexModel : textModel);
+    // Check if user is a participant in the conversation
+    const isParticipant = conversation.participants && 
+                        conversation.participants.some(p => p.toString() === req.user.id);
     
-    const modelName = modelToUse === complexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+    if (!isParticipant) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to participate in this conversation'
+      });
+    }
     
-    // Format conversation history for Gemini API
-    const chatHistory = conversation.messages.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    }));
+    // Check if messages array exists, if not, initialize it
+    if (!Array.isArray(conversation.messages)) {
+      console.log('Initializing messages array for conversation:', conversationId);
+      conversation.messages = [];
+    }
     
-    // Start chat with existing history
-    const chat = modelToUse.startChat({
-      history: chatHistory,
-      generationConfig: {
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      }
+    // Create new message
+    const newMessage = new Message({
+      conversation: conversationId,
+      sender: req.user.id,
+      text: message
     });
     
-    // Add user message to conversation
-    conversation.messages.push({
-      role: 'user',
-      content: message,
-      timestamp: new Date()
-    });
+    await newMessage.save();
     
-    // Get response from AI
-    const result = await chat.sendMessage(message);
-    const response = await result.response;
-    const aiReply = response.text();
+    // Update conversation's last message
+    conversation.lastMessage = {
+      sender: req.user.id,
+      text: message,
+      timestamp: new Date(),
+      read: false
+    };
     
-    // Add AI response to conversation
-    conversation.messages.push({
-      role: 'assistant',
-      content: aiReply,
-      timestamp: new Date()
-    });
+    // Update conversation timestamp
+    conversation.updatedAt = new Date();
     
-    // Update conversation metadata
-    conversation.lastUpdated = new Date();
-    conversation.model = modelName; // Update the model if it changed
-    
-    // Save the updated conversation
+    // Save conversation
     await conversation.save();
     
-    res.status(200).json({
+    // Format response
+    const formattedMessage = {
+      id: newMessage._id,
+      sender: req.user.id,
+      text: message,
+      timestamp: newMessage.createdAt,
+      read: false
+    };
+    
+    res.status(201).json({
       success: true,
-      data: {
-        conversation: {
-          id: conversation._id,
-          title: conversation.title,
-          messages: conversation.messages,
-          lastUpdated: conversation.lastUpdated,
-          model: modelName
-        },
-        latestMessage: aiReply
-      }
+      data: formattedMessage
     });
   } catch (error) {
-    console.error('Error continuing conversation:', error);
+    console.error('Error sending message:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -1049,6 +1155,113 @@ exports.deleteAllConversations = async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting all conversations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get messages for a conversation
+// @route   GET /api/connections/conversations/:conversationId/messages
+// @access  Private
+exports.getConversationMessages = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    
+    // Find conversation
+    const conversation = await Conversation.findById(conversationId);
+    
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+    
+    // Check if user is a participant in the conversation
+    const isParticipant = conversation.participants.some(
+      p => p.toString() === req.user.id
+    );
+    
+    if (!isParticipant) {
+      console.log('User not authorized:', req.user.id);
+      console.log('Conversation participants:', conversation.participants);
+      
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to access this conversation'
+      });
+    }
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get messages with pagination (newest first)
+    const messages = await Message.find({
+      conversation: conversationId
+    })
+      .populate('sender', 'fullName avatar profileImage')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Automatically mark unread messages as read if sent by other user
+    const unreadMessagesIds = messages
+      .filter(msg => !msg.read && msg.sender._id.toString() !== req.user.id)
+      .map(msg => msg._id);
+    
+    if (unreadMessagesIds.length > 0) {
+      await Message.updateMany(
+        { _id: { $in: unreadMessagesIds } },
+        { 
+          read: true,
+          readAt: Date.now()
+        }
+      );
+      
+      // If the last message was unread, update conversation's lastMessage.read status
+      if (conversation.lastMessage && 
+          conversation.lastMessage.sender && 
+          conversation.lastMessage.sender.toString() !== req.user.id && 
+          conversation.lastMessage.read === false) {
+        conversation.lastMessage.read = true;
+        await conversation.save();
+      }
+    }
+    
+    // Get total count for pagination
+    const total = await Message.countDocuments({ conversation: conversationId });
+    
+    // Get the other participant
+    const otherParticipantId = conversation.participants.find(
+      p => p.toString() !== req.user.id
+    );
+    
+    // Get other participant's details if available
+    let otherUser = null;
+    if (otherParticipantId) {
+      otherUser = await User.findById(otherParticipantId)
+        .select('fullName email profileImage avatar');
+    }
+    
+    res.status(200).json({
+      success: true,
+      count: messages.length,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit))
+      },
+      data: {
+        messages,
+        otherUser
+      }
+    });
+  } catch (error) {
+    console.error('Error getting conversation messages:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',

@@ -52,7 +52,7 @@ router.post('/chat', aiController.quickChat);
 router.get('/conversations', aiController.getConversations);
 router.get('/conversations/:conversationId', aiController.getConversation);
 router.post('/conversations/start', aiController.startConversation);
-router.post('/conversations/:conversationId/continue', aiController.continueConversation);
+router.post('/conversations/:conversationId/continue', aiController.continueAiConversation); // Updated name
 router.delete('/conversations/:conversationId', aiController.deleteConversation);
 router.delete('/conversations', aiController.deleteAllConversations);
 

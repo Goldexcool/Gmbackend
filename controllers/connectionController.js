@@ -1120,3 +1120,85 @@ exports.getDepartmentsForSearch = async (req, res) => {
     });
   }
 };
+
+/**
+ * @desc    Create a new conversation
+ * @route   POST /api/connections/conversations
+ * @access  Private
+ */
+exports.createConversation = async (req, res) => {
+  try {
+    const { title, recipientId, initialMessage } = req.body;
+    
+    if (!recipientId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Recipient ID is required'
+      });
+    }
+    
+    // Check if recipient exists
+    const recipient = await User.findById(recipientId);
+    if (!recipient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Recipient not found'
+      });
+    }
+    
+    // Check if conversation already exists between these users
+    const existingConversation = await Conversation.findOne({
+      participants: { 
+        $all: [req.user.id, recipientId]
+      }
+    });
+    
+    if (existingConversation) {
+      return res.status(200).json({
+        success: true,
+        message: 'Conversation already exists',
+        data: existingConversation
+      });
+    }
+    
+    // Create new conversation
+    const newConversation = new Conversation({
+      participants: [req.user.id, recipientId],
+      title: title || `Chat with ${recipient.fullName}`,
+      isActive: true
+    });
+    
+    // Add initial message if provided
+    if (initialMessage) {
+      const message = new Message({
+        conversation: newConversation._id,
+        sender: req.user.id,
+        text: initialMessage,
+        read: false
+      });
+      
+      await message.save();
+      
+      newConversation.lastMessage = {
+        sender: req.user.id,
+        text: initialMessage,
+        timestamp: new Date(),
+        read: false
+      };
+    }
+    
+    await newConversation.save();
+    
+    res.status(201).json({
+      success: true,
+      data: newConversation
+    });
+  } catch (error) {
+    console.error('Error creating conversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};

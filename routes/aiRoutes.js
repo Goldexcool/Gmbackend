@@ -48,6 +48,14 @@ router.post('/summarize-text', aiController.summarizeText);
 router.post('/conversation/start', aiController.startConversation);
 router.post('/chat', aiController.quickChat);
 
+// Conversation management routes
+router.get('/conversations', aiController.getConversations);
+router.get('/conversations/:conversationId', aiController.getConversation);
+router.post('/conversations/start', aiController.startConversation);
+router.post('/conversations/:conversationId/continue', aiController.continueConversation);
+router.delete('/conversations/:conversationId', aiController.deleteConversation);
+router.delete('/conversations', aiController.deleteAllConversations);
+
 // Add new route for AI service
 router.use('/ask', aiService);
 

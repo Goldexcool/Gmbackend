@@ -740,7 +740,7 @@ exports.quickChat = async (req, res) => {
 };
 
 // @desc    Start a new conversation with name generation
-// @route   POST /api/ai/conversation/start
+// @route   POST /api/ai/conversations/start
 // @access  Private
 exports.startConversation = async (req, res) => {
   try {
@@ -779,25 +779,276 @@ exports.startConversation = async (req, res) => {
       }
     }
     
-    // Create conversation object (but don't save to database)
-    const conversation = {
-      id: 'temp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+    // Create and save the conversation to database
+    const newConversation = new Conversation({
+      user: req.user.id,
       title: suggestedName,
       model: modelName,
       messages: [
         { role: 'user', content: message, timestamp: new Date() },
         { role: 'assistant', content: aiReply, timestamp: new Date() }
       ],
-      createdAt: new Date(),
       lastUpdated: new Date()
-    };
+    });
+    
+    await newConversation.save();
+    
+    res.status(201).json({
+      success: true,
+      data: {
+        conversation: {
+          id: newConversation._id,
+          title: newConversation.title,
+          messages: newConversation.messages,
+          createdAt: newConversation.createdAt,
+          lastUpdated: newConversation.lastUpdated,
+          model: newConversation.model
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error starting conversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get all conversations for the current user
+// @route   GET /api/ai/conversations
+// @access  Private
+exports.getConversations = async (req, res) => {
+  try {
+    // Find all conversations for the current user
+    const conversations = await Conversation.find({ user: req.user.id })
+      .sort('-lastUpdated')
+      .select('_id title lastUpdated model');
     
     res.status(200).json({
       success: true,
-      conversation
+      count: conversations.length,
+      data: conversations.map(conv => ({
+        id: conv._id,
+        title: conv.title,
+        lastUpdated: conv.lastUpdated,
+        model: conv.model || 'gemini-1.5-flash'
+      }))
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching conversations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get a full conversation by ID
+// @route   GET /api/ai/conversations/:conversationId
+// @access  Private
+exports.getConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    
+    // Find the conversation by ID and user
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: req.user.id
+    });
+    
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found or you do not have permission to access it'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        id: conversation._id,
+        title: conversation.title,
+        messages: conversation.messages,
+        createdAt: conversation.createdAt,
+        lastUpdated: conversation.lastUpdated,
+        model: conversation.model || 'gemini-1.5-flash'
+      }
+    });
+  } catch (error) {
+    console.error('Error getting conversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Continue an existing conversation
+// @route   POST /api/ai/conversations/:conversationId/continue
+// @access  Private
+exports.continueConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { message, useComplexModel } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a message'
+      });
+    }
+    
+    // Find the conversation by ID and user
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: req.user.id
+    });
+    
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found or you do not have permission to access it'
+      });
+    }
+    
+    // Determine which model to use - either from the request, or use the one from the conversation
+    const modelToUse = useComplexModel !== undefined ? 
+      (useComplexModel ? complexModel : textModel) : 
+      (conversation.model === 'gemini-1.5-pro' ? complexModel : textModel);
+    
+    const modelName = modelToUse === complexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+    
+    // Format conversation history for Gemini API
+    const chatHistory = conversation.messages.map(msg => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }]
+    }));
+    
+    // Start chat with existing history
+    const chat = modelToUse.startChat({
+      history: chatHistory,
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 1024,
+      }
+    });
+    
+    // Add user message to conversation
+    conversation.messages.push({
+      role: 'user',
+      content: message,
+      timestamp: new Date()
+    });
+    
+    // Get response from AI
+    const result = await chat.sendMessage(message);
+    const response = await result.response;
+    const aiReply = response.text();
+    
+    // Add AI response to conversation
+    conversation.messages.push({
+      role: 'assistant',
+      content: aiReply,
+      timestamp: new Date()
+    });
+    
+    // Update conversation metadata
+    conversation.lastUpdated = new Date();
+    conversation.model = modelName; // Update the model if it changed
+    
+    // Save the updated conversation
+    await conversation.save();
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        conversation: {
+          id: conversation._id,
+          title: conversation.title,
+          messages: conversation.messages,
+          lastUpdated: conversation.lastUpdated,
+          model: modelName
+        },
+        latestMessage: aiReply
+      }
+    });
+  } catch (error) {
+    console.error('Error continuing conversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Delete a specific conversation
+// @route   DELETE /api/ai/conversations/:conversationId
+// @access  Private
+exports.deleteConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    
+    // Validate the conversation ID
+    if (!conversationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Conversation ID is required'
+      });
+    }
+    
+    // Find the conversation by ID and user
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: req.user.id
+    });
+    
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found or you do not have permission to delete it'
+      });
+    }
+    
+    // Delete the conversation
+    await Conversation.findByIdAndDelete(conversationId);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Conversation deleted successfully',
+      data: { id: conversationId }
+    });
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Delete all conversations for the current user
+// @route   DELETE /api/ai/conversations
+// @access  Private
+exports.deleteAllConversations = async (req, res) => {
+  try {
+    // Find all conversations for the current user
+    const result = await Conversation.deleteMany({ user: req.user.id });
+    
+    res.status(200).json({
+      success: true,
+      message: 'All conversations deleted successfully',
+      data: { count: result.deletedCount }
+    });
+  } catch (error) {
+    console.error('Error deleting all conversations:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',

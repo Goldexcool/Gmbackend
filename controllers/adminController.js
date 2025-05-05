@@ -838,57 +838,62 @@ exports.getUserById = async (req, res) => {
     let roleData = null;
     
     if (user.role === 'student') {
-      // For students, get their department and course details
-      roleData = await Student.findOne({ user: id })
-        .populate({
-          path: 'department',
-          select: 'name code faculty',
-          model: 'Department'
-        })
-        .populate({
-          path: 'courses',
-          select: 'code title credits level',
-          model: 'Course'
-        });
-      
-      // Double-check that department is populated correctly
-      if (roleData && roleData.department && typeof roleData.department === 'object') {
-        console.log("Student department populated:", roleData.department);
-      } else if (roleData && roleData.department) {
-        // If department exists but isn't populated, fetch manually
-        const department = await Department.findById(roleData.department)
-          .select('name code faculty');
+      try {
+        // For students, get their department and course details
+        roleData = await Student.findOne({ user: id });
         
-        // Assign the department details
-        roleData = roleData.toObject();
-        roleData.department = department;
+        if (roleData) {
+          // Populate department separately to avoid schema issues
+          if (roleData.department) {
+            const department = await Department.findById(roleData.department)
+              .select('name code faculty');
+            
+            // Convert to object and add department
+            roleData = roleData.toObject();
+            roleData.department = department;
+          }
+          
+          // Populate courses separately
+          if (roleData.courses && roleData.courses.length > 0) {
+            const courses = await Course.find({
+              _id: { $in: roleData.courses }
+            }).select('code title credits level');
+            
+            roleData.courses = courses;
+          }
+        }
+      } catch (studentError) {
+        console.error('Error fetching student data:', studentError);
+        // Continue with partial data rather than failing the whole request
       }
-      
     } else if (user.role === 'lecturer') {
-      // For lecturers, get their department and course details
-      roleData = await Lecturer.findOne({ user: id })
-        .populate({
-          path: 'department',
-          select: 'name code faculty',
-          model: 'Department'
-        })
-        .populate({
-          path: 'courses',
-          select: 'code title credits level',
-          model: 'Course'
-        });
-      
-      // Double-check that department is populated correctly
-      if (roleData && roleData.department && typeof roleData.department === 'object') {
-        console.log("Lecturer department populated:", roleData.department);
-      } else if (roleData && roleData.department) {
-        // If department exists but isn't populated, fetch manually
-        const department = await Department.findById(roleData.department)
-          .select('name code faculty');
+      try {
+        // For lecturers, get their department and course details
+        roleData = await Lecturer.findOne({ user: id });
         
-        // Assign the department details
-        roleData = roleData.toObject();
-        roleData.department = department;
+        if (roleData) {
+          // Populate department separately to avoid schema issues
+          if (roleData.department) {
+            const department = await Department.findById(roleData.department)
+              .select('name code faculty');
+            
+            // Convert to object and add department
+            roleData = roleData.toObject();
+            roleData.department = department;
+          }
+          
+          // Populate courses separately
+          if (roleData.courses && roleData.courses.length > 0) {
+            const courses = await Course.find({
+              _id: { $in: roleData.courses }
+            }).select('code title credits level');
+            
+            roleData.courses = courses;
+          }
+        }
+      } catch (lecturerError) {
+        console.error('Error fetching lecturer data:', lecturerError);
+        // Continue with partial data rather than failing the whole request
       }
     }
     

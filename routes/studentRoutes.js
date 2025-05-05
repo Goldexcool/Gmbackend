@@ -18,7 +18,7 @@ router.use(authorize('student'));
 router.put('/profile', fileUpload.single('profilePicture'), studentController.updateStudentProfile);
 
 // Course routes
-router.get('/courses', studentController.getStudentCourses);  // This should handle /api/student/courses
+router.get('/courses', studentController.getStudentCourses);  
 router.get('/courses/department', studentController.getCoursesByDepartmentAndLevel);
 router.get('/courses/department-fallback', studentController.getCoursesByDepartmentAndLevelWithFallback);
 router.get('/courses/available', studentController.getAvailableCourses);

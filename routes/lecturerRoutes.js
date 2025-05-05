@@ -54,6 +54,10 @@ router.post(
   fileUpload.uploadMultiple('attachments', 5),
   courseRepController.sendMessage
 );
+// Chat management routes
+router.delete('/course-reps/:repId/chat', courseRepController.clearChatHistory);
+router.delete('/course-reps/:repId/chat/:messageId', courseRepController.deleteMessage);
+router.put('/course-reps/:repId/chat/:messageId', courseRepController.editMessage);
 
 // Student routes
 router.get('/courses/:courseId/students', courseRepController.getEnrolledStudents);

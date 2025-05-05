@@ -690,6 +690,9 @@ exports.getAllUsers = async (req, res) => {
       role,
       isActive,
       search,
+      matricNumber,
+      staffId,
+      _id,
       page = 1,
       limit = 20,
       sortBy = 'createdAt',
@@ -709,6 +712,36 @@ exports.getAllUsers = async (req, res) => {
       ];
     }
     
+    // Handle matric number search (for students)
+    if (matricNumber) {
+      const studentsWithMatric = await Student.find({ 
+        matricNumber: { $regex: matricNumber, $options: 'i' } 
+      }).select('user');
+      
+      const studentUserIds = studentsWithMatric.map(student => student.user);
+      
+      if (query.$or) {
+        query.$or.push({ _id: { $in: studentUserIds } });
+      } else {
+        query._id = { $in: studentUserIds };
+      }
+    }
+    
+    // Handle staff ID search (for lecturers)
+    if (staffId) {
+      const lecturersWithStaffId = await Lecturer.find({ 
+        staffId: { $regex: staffId, $options: 'i' } 
+      }).select('user');
+      
+      const lecturerUserIds = lecturersWithStaffId.map(lecturer => lecturer.user);
+      
+      if (query.$or) {
+        query.$or.push({ _id: { $in: lecturerUserIds } });
+      } else {
+        query._id = { $in: lecturerUserIds };
+      }
+    }
+    
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
@@ -722,6 +755,27 @@ exports.getAllUsers = async (req, res) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
+    
+    // Enhance user objects with additional info (matric number, staff ID)
+    const enhancedUsers = await Promise.all(users.map(async (user) => {
+      const userObj = user.toObject();
+      
+      if (user.role === 'student') {
+        const student = await Student.findOne({ user: user._id }).select('matricNumber department');
+        if (student) {
+          userObj.matricNumber = student.matricNumber;
+          userObj.departmentId = student.department;
+        }
+      } else if (user.role === 'lecturer') {
+        const lecturer = await Lecturer.findOne({ user: user._id }).select('staffId department');
+        if (lecturer) {
+          userObj.staffId = lecturer.staffId;
+          userObj.departmentId = lecturer.department;
+        }
+      }
+      
+      return userObj;
+    }));
     
     // Get total count for pagination
     const total = await User.countDocuments(query);
@@ -737,14 +791,14 @@ exports.getAllUsers = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      count: users.length,
+      count: enhancedUsers.length,
       pagination: {
         total,
         page: parseInt(page),
         pages: Math.ceil(total / parseInt(limit))
       },
       stats,
-      data: users
+      data: enhancedUsers
     });
   } catch (error) {
     console.error('Error getting users:', error);
@@ -888,19 +942,45 @@ exports.deleteUser = async (req, res) => {
     // Check if user exists
     const user = await User.findById(id);
     if (!user) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
     
+    // Collect user info for logging
+    const userData = {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role
+    };
+    
     // Check if user has role-specific data to delete
     if (user.role === 'student') {
       const student = await Student.findOne({ user: id });
       
       if (student) {
+        // Store matric number for logging
+        userData.matricNumber = student.matricNumber;
+        
+        // Delete course rep assignments
+        await CourseRep.deleteMany({ student: student._id }, { session });
+        
         // Delete enrollments for student
         await Enrollment.deleteMany({ student: student._id }, { session });
+        
+        // Remove student from any study groups
+        await StudyGroup.updateMany(
+          { members: student._id },
+          { $pull: { members: student._id } },
+          { session }
+        );
+        
+        // Delete assignment submissions
+        await AssignmentSubmission.deleteMany({ student: student._id }, { session });
         
         // Delete student record
         await Student.findByIdAndDelete(student._id, { session });
@@ -909,6 +989,9 @@ exports.deleteUser = async (req, res) => {
       const lecturer = await Lecturer.findOne({ user: id });
       
       if (lecturer) {
+        // Store staff ID for logging
+        userData.staffId = lecturer.staffId;
+        
         // Update courses to remove this lecturer
         await Course.updateMany(
           { lecturer: lecturer._id },
@@ -919,13 +1002,45 @@ exports.deleteUser = async (req, res) => {
         // Delete schedules for this lecturer
         await Schedule.deleteMany({ lecturer: lecturer._id }, { session });
         
+        // Delete assignments created by this lecturer
+        await Assignment.deleteMany({ createdBy: id }, { session });
+        
+        // Delete course resources created by this lecturer
+        await Resource.deleteMany({ uploadedBy: id }, { session });
+        
+        // Delete tasks created by this lecturer
+        await Task.deleteMany({ createdBy: lecturer._id }, { session });
+        
         // Delete lecturer record
         await Lecturer.findByIdAndDelete(lecturer._id, { session });
       }
     }
     
+    // Delete chat messages
+    await Chat.updateMany(
+      { "messages.sender": id },
+      { $pull: { messages: { sender: id } } },
+      { session }
+    );
+    
+    // Delete user's announcements
+    await Announcement.deleteMany({ author: id }, { session });
+    
+    // Delete user's posts and comments
+    await Post.deleteMany({ author: id }, { session });
+    await Comment.deleteMany({ author: id }, { session });
+    
     // Finally delete user
     await User.findByIdAndDelete(id, { session });
+    
+    // Log the deletion
+    await SystemActivity.create([{
+      user: req.user.id,
+      action: 'DELETE_USER',
+      details: `Deleted user: ${JSON.stringify(userData)}`,
+      affectedModel: 'User',
+      affectedId: id
+    }], { session });
     
     await session.commitTransaction();
     session.endSession();
@@ -933,7 +1048,7 @@ exports.deleteUser = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'User deleted successfully',
-      data: { id }
+      data: userData
     });
   } catch (error) {
     await session.abortTransaction();
@@ -1614,6 +1729,7 @@ exports.getAllStudents = async (req, res) => {
       department,
       level,
       isActive,
+      matricNumber,
       page = 1,
       limit = 20,
       sortBy = 'createdAt',
@@ -2078,6 +2194,7 @@ exports.getAllLecturers = async (req, res) => {
       search,
       department,
       isActive,
+      staffId,  
       page = 1,
       limit = 20,
       sortBy = 'createdAt',
@@ -2120,6 +2237,14 @@ exports.getAllLecturers = async (req, res) => {
         ]
       });
       
+      filterApplied = true;
+    }
+    
+    // Add direct staff ID filter
+    if (staffId) {
+      lecturersQuery = lecturersQuery.where({ 
+        staffId: { $regex: staffId, $options: 'i' } 
+      });
       filterApplied = true;
     }
     
@@ -2175,6 +2300,14 @@ exports.getAllLecturers = async (req, res) => {
     const countQuery = filterApplied ? Lecturer.find(lecturersQuery.getFilter()) : Lecturer.find();
     const total = await countQuery.countDocuments();
     
+    // Enhance the response to include staff IDs explicitly
+    const enhancedLecturers = lecturers.map(lecturer => {
+      const lecturerObj = lecturer.toObject();
+      // Add staffId at the top level for easier access
+      lecturerObj.staffId = lecturer.staffId;
+      return lecturerObj;
+    });
+    
     // Get statistics
     const stats = {
       total: await Lecturer.countDocuments(),
@@ -2213,14 +2346,14 @@ exports.getAllLecturers = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      count: lecturers.length,
+      count: enhancedLecturers.length,
       pagination: {
         total,
         page: parseInt(page),
         pages: Math.ceil(total / parseInt(limit))
       },
       stats,
-      data: lecturers
+      data: enhancedLecturers
     });
   } catch (error) {
     console.error('Error getting lecturers:', error);
@@ -2496,14 +2629,31 @@ exports.deleteLecturer = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Find lecturer
+    // Find lecturer with staffId
     const lecturer = await Lecturer.findById(id);
     if (!lecturer) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({
         success: false,
         message: 'Lecturer not found'
       });
     }
+    
+    const lecturerInfo = {
+      id: lecturer._id,
+      staffId: lecturer.staffId,
+      userId: lecturer.user
+    };
+    
+    // Log the deletion details
+    await SystemActivity.create([{
+      user: req.user.id,
+      action: 'DELETE_LECTURER',
+      details: `Deleted lecturer with staff ID: ${lecturer.staffId}`,
+      affectedModel: 'Lecturer',
+      affectedId: id
+    }], { session });
     
     // Update courses to remove this lecturer
     await Course.updateMany(
@@ -2530,7 +2680,11 @@ exports.deleteLecturer = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Lecturer deleted successfully',
-      data: { id }
+      data: {
+        id: lecturerInfo.id,
+        staffId: lecturerInfo.staffId, // Include staffId in the response
+        userId: lecturerInfo.userId
+      }
     });
   } catch (error) {
     await session.abortTransaction();

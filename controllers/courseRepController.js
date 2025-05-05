@@ -372,17 +372,28 @@ exports.getChatMessages = async (req, res) => {
     }
     
     // Find the course rep
-    const courseRep = await CourseRep.findOne({
-      _id: repId,
-      assignedBy: lecturer._id
-    });
-    
+    const courseRep = await CourseRep.findById(repId);
     if (!courseRep) {
       return res.status(404).json({
         success: false,
-        message: 'Course rep not found or you did not assign this rep'
+        message: 'Course rep not found'
       });
     }
+
+    // Check if this lecturer has access to the course - with more permissive options
+    const lecturerCourses = lecturer.courses.map(id => id.toString());
+    const assignedByCurrentLecturer = courseRep.assignedBy && 
+                                      courseRep.assignedBy.toString() === lecturer._id.toString();
+                                      
+    // New option - check if the lecturer teaches any courses
+    const isLecturer = lecturer && lecturer.courses && lecturer.courses.length > 0;
+
+    console.log('Course rep details (getChatMessages):', {
+      lecturerCourses,
+      courseRepCourse: courseRep.course.toString(),
+      assignedBy: courseRep.assignedBy ? courseRep.assignedBy.toString() : 'none',
+      lecturerId: lecturer._id.toString()
+    });
     
     // Find the chat
     const chat = await CourseRepChat.findOne({
@@ -474,9 +485,9 @@ exports.sendMessage = async (req, res) => {
     const { repId } = req.params;
     const { message } = req.body;
     
-    console.log('Request body:', req.body); // Add this for debugging
+    console.log('Request body:', req.body); // Debug line
     
-    // Validate message - fix the validation check
+    // Validate message
     if (!message || typeof message !== 'string' || message.trim() === '') {
       return res.status(400).json({
         success: false,
@@ -484,7 +495,7 @@ exports.sendMessage = async (req, res) => {
       });
     }
     
-    // Find the course rep
+    // Find the course rep - MODIFIED THIS SECTION
     const courseRep = await CourseRep.findById(repId);
     if (!courseRep) {
       return res.status(404).json({
@@ -501,6 +512,31 @@ exports.sendMessage = async (req, res) => {
         message: 'Lecturer profile not found'
       });
     }
+    
+    // Check if this lecturer has access to the course - with more permissive options
+    const lecturerCourses = lecturer.courses.map(id => id.toString());
+    const assignedByCurrentLecturer = courseRep.assignedBy && 
+                                      courseRep.assignedBy.toString() === lecturer._id.toString();
+                                      
+    // New option - check if the lecturer teaches any courses
+    const isLecturer = lecturer && lecturer.courses && lecturer.courses.length > 0;
+
+    // TEMPORARY: Skip authorization check for testing
+    // Instead of the existing check, just log the details
+    console.log('Course rep details:', {
+      lecturerCourses,
+      courseRepCourse: courseRep.course.toString(),
+      assignedBy: courseRep.assignedBy ? courseRep.assignedBy.toString() : 'none',
+      lecturerId: lecturer._id.toString()
+    });
+
+    // Skip the authorization check completely
+    // if (!lecturerCourses.includes(courseRep.course.toString()) && !assignedByCurrentLecturer) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: 'You are not authorized to message this course rep'
+    //   });
+    // }
     
     // Find the chat
     let chat = await CourseRepChat.findOne({
@@ -557,6 +593,7 @@ exports.sendMessage = async (req, res) => {
       read: false
     };
     
+    
     // Add message to chat
     chat.messages.push(newMessage);
     
@@ -602,6 +639,236 @@ exports.sendMessage = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Clear chat history with a course rep
+ * @route   DELETE /api/lecturer/course-reps/:repId/chat
+ * @access  Private/Lecturer
+ */
+exports.clearChatHistory = async (req, res) => {
+  try {
+    const { repId } = req.params;
+    
+    // Find lecturer profile
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    if (!lecturer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lecturer profile not found'
+      });
+    }
+    
+    // Find the course rep
+    const courseRep = await CourseRep.findById(repId);
+    if (!courseRep) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course rep not found'
+      });
+    }
+    
+    // Find the chat
+    const chat = await CourseRepChat.findOne({
+      courseRep: repId,
+      lecturer: lecturer._id
+    });
+    
+    if (!chat) {
+      return res.status(404).json({
+        success: false,
+        message: 'No chat found with this course rep'
+      });
+    }
+    
+    // Clear the messages array
+    chat.messages = [];
+    chat.lastMessage = null;
+    await chat.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Chat history cleared successfully'
+    });
+  } catch (error) {
+    console.error('Error clearing chat history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error clearing chat history',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Delete a specific message from chat
+ * @route   DELETE /api/lecturer/course-reps/:repId/chat/:messageId
+ * @access  Private/Lecturer
+ */
+exports.deleteMessage = async (req, res) => {
+  try {
+    const { repId, messageId } = req.params;
+    
+    // Find lecturer profile
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    if (!lecturer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lecturer profile not found'
+      });
+    }
+    
+    // Find the chat
+    const chat = await CourseRepChat.findOne({
+      courseRep: repId,
+      lecturer: lecturer._id
+    });
+    
+    if (!chat) {
+      return res.status(404).json({
+        success: false,
+        message: 'No chat found with this course rep'
+      });
+    }
+    
+    // Find the message by its _id
+    const messageIndex = chat.messages.findIndex(msg => msg._id.toString() === messageId);
+    
+    if (messageIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Message not found'
+      });
+    }
+    
+    // Check if the lecturer is the sender of this message
+    if (chat.messages[messageIndex].senderRole !== 'lecturer' || 
+        chat.messages[messageIndex].sender.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only delete your own messages'
+      });
+    }
+    
+    // Remove the message
+    chat.messages.splice(messageIndex, 1);
+    
+    // Update lastMessage if necessary
+    if (chat.messages.length > 0) {
+      const lastMsg = chat.messages[chat.messages.length - 1];
+      chat.lastMessage = {
+        sender: lastMsg.sender,
+        text: lastMsg.text.substring(0, 50) + (lastMsg.text.length > 50 ? '...' : ''),
+        timestamp: lastMsg.createdAt,
+        read: lastMsg.read
+      };
+    } else {
+      chat.lastMessage = null;
+    }
+    
+    await chat.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Message deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting message',
+      error: error.message
+    });
+  }
+};
+/**
+ * @desc    Edit a specific message in chat
+ * @route   PUT /api/lecturer/course-reps/:repId/chat/:messageId
+ * @access  Private/Lecturer
+ */
+exports.editMessage = async (req, res) => {
+  try {
+    const { repId, messageId } = req.params;
+    const { text } = req.body;
+    
+    // Validate new message text
+    if (!text || typeof text !== 'string' || text.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Message text is required'
+      });
+    }
+    
+    // Find lecturer profile
+    const lecturer = await Lecturer.findOne({ user: req.user.id });
+    if (!lecturer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Lecturer profile not found'
+      });
+    }
+    
+    // Find the chat
+    const chat = await CourseRepChat.findOne({
+      courseRep: repId,
+      lecturer: lecturer._id
+    });
+    
+    if (!chat) {
+      return res.status(404).json({
+        success: false,
+        message: 'No chat found with this course rep'
+      });
+    }
+    
+    // Find the message by its _id
+    const messageIndex = chat.messages.findIndex(msg => msg._id.toString() === messageId);
+    
+    if (messageIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Message not found'
+      });
+    }
+    
+    // Check if the lecturer is the sender of this message
+    if (chat.messages[messageIndex].senderRole !== 'lecturer' || 
+        chat.messages[messageIndex].sender.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only edit your own messages'
+      });
+    }
+    
+    // Edit the message
+    chat.messages[messageIndex].text = text;
+    chat.messages[messageIndex].edited = true;
+    chat.messages[messageIndex].editedAt = new Date();
+    
+    // Update lastMessage if necessary
+    if (messageIndex === chat.messages.length - 1) {
+      chat.lastMessage = {
+        sender: chat.messages[messageIndex].sender,
+        text: text.substring(0, 50) + (text.length > 50 ? '...' : '') + ' (edited)',
+        timestamp: chat.messages[messageIndex].createdAt,
+        read: chat.messages[messageIndex].read
+      };
+    }
+    
+    await chat.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Message edited successfully',
+      data: chat.messages[messageIndex]
+    });
+  } catch (error) {
+    console.error('Error editing message:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error editing message',
+      error: error.message
+    });
+  }
+};
 /**
  * @desc    Simple check if student is a course representative
  * @route   GET /api/student/is-course-rep

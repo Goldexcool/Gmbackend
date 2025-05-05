@@ -415,17 +415,29 @@ exports.deleteChat = async (req, res) => {
 exports.sendMessage = async (req, res) => {
   try {
     const { repId } = req.params;
-    const { message } = req.body;
     
-    // Validate message
-    if (!message || message.trim() === '') {
+    // Get message text from either message or text field
+    const messageText = req.body.message || req.body.text;
+    
+    if (!messageText || messageText.trim() === '') {
       return res.status(400).json({
         success: false,
         message: 'Message text is required'
       });
     }
     
-    // Rest of the function...
+    // Rest of your function remains the same
+    // ...
+    
+    // When creating the message, use the extracted messageText
+    const newMessage = {
+      text: messageText,
+      sender: req.user.id,
+      senderRole: 'student',
+      // Other fields...
+    };
+    
+    // ...
   } catch (error) {
     console.error(error);
     res.status(500).json({

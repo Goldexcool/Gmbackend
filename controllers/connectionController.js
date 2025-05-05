@@ -6,6 +6,9 @@ const Message = require('../models/Message');
 const Department = require('../models/Department');
 const mongoose = require('mongoose');
 
+const conversationSchema = mongoose.model('Conversation').schema;
+console.log('Conversation Schema Fields:', Object.keys(conversationSchema.paths));
+
 /**
  * @desc    Get connection suggestions for the user
  * @route   GET /api/connections/suggestions
@@ -13,93 +16,109 @@ const mongoose = require('mongoose');
  */
 exports.getConnectionSuggestions = async (req, res) => {
   try {
-    // First, check if the user is a student
+    // Get current user's student profile
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User profile not found'
+      });
+    }
+
+    // Find the student profile for the current user
     const student = await Student.findOne({ user: req.user.id });
     
-    if (!student) {
-      return res.status(400).json({
-        success: false,
-        message: 'Only students can use the connection feature'
-      });
-    }
+    // Initialize query to find all students except the current user
+    let query = {
+      user: { $ne: req.user.id },
+      // Avoid suggesting users who already have a connection with the current user
+      _id: { $nin: [] }
+    };
     
-    // Get current user's department
-    const departmentId = student.department;
-    
-    if (!departmentId) {
-      return res.status(400).json({
-        success: false,
-        message: 'You need to be assigned to a department to see connection suggestions'
-      });
-    }
-    
-    // Find all students in the same department
-    const departmentStudents = await Student.find({
-      department: departmentId,
-      user: { $ne: req.user.id } // Exclude current user
-    }).populate('user', 'fullName email avatar bio');
-    
-    // Get IDs of students from the same department
-    const departmentStudentUserIds = departmentStudents.map(s => s.user._id);
-    
-    // Get IDs of users the current user is already connected with or has pending requests
-    const connections = await Connection.find({
+    // Find all existing connections
+    const existingConnections = await Connection.find({
       $or: [
         { requester: req.user.id },
         { recipient: req.user.id }
       ]
     });
     
-    const connectedUserIds = connections.map(c => 
-      c.requester.toString() === req.user.id.toString() ? c.recipient : c.requester
-    );
+    // Get IDs of all users the current user is already connected with
+    const connectedUserIds = existingConnections.map(conn => {
+      return conn.requester.toString() === req.user.id 
+        ? conn.recipient 
+        : conn.requester;
+    });
     
-    // Filter out students who are already connected or have pending requests
-    const filteredDepartmentStudents = departmentStudents.filter(
-      s => !connectedUserIds.includes(s.user._id.toString())
-    );
-    
-    // Find students from other departments (limit to 10)
-    const otherStudents = await Student.find({
-      department: { $ne: departmentId },
-      user: { 
+    // Exclude users who already have connections
+    if (connectedUserIds.length > 0) {
+      query.user = { 
         $ne: req.user.id,
-        $nin: connectedUserIds
-      }
-    })
-      .populate('user', 'fullName email avatar bio')
-      .limit(10);
+        $nin: connectedUserIds 
+      };
+    }
     
-    // Format response
-    const departmentSuggestions = filteredDepartmentStudents.map(s => ({
-      _id: s.user._id,
-      fullName: s.user.fullName,
-      email: s.user.email,
-      avatar: s.user.avatar,
-      bio: s.user.bio,
-      matricNumber: s.matricNumber,
-      level: s.level,
-      sameDepartment: true
-    }));
+    // Prioritize suggestions based on various factors
+    let suggestions = [];
     
-    const otherSuggestions = otherStudents.map(s => ({
-      _id: s.user._id,
-      fullName: s.user.fullName,
-      email: s.user.email,
-      avatar: s.user.avatar,
-      bio: s.user.bio,
-      matricNumber: s.matricNumber,
-      level: s.level,
-      department: s.department,
-      sameDepartment: false
-    }));
+    // First, try to find students in the same department if student record exists
+    if (student && student.department) {
+      const departmentStudents = await Student.find({
+        ...query,
+        department: student.department
+      })
+      .populate('user', 'fullName email profileImage')
+      .populate('department', 'name')
+      .limit(5);
+      
+      suggestions.push(...departmentStudents);
+    }
+    
+    // If we need more suggestions, find students in the same courses
+    if (student && suggestions.length < 10 && student.courses && student.courses.length > 0) {
+      const courseStudents = await Student.find({
+        ...query,
+        courses: { $in: student.courses },
+        _id: { $nin: suggestions.map(s => s._id) }  // Exclude already suggested students
+      })
+      .populate('user', 'fullName email profileImage')
+      .populate('department', 'name')
+      .limit(10 - suggestions.length);
+      
+      suggestions.push(...courseStudents);
+    }
+    
+    // If we still need more, get general suggestions
+    if (suggestions.length < 10) {
+      const generalStudents = await Student.find({
+        ...query,
+        _id: { $nin: suggestions.map(s => s._id) }  // Exclude already suggested students
+      })
+      .populate('user', 'fullName email profileImage')
+      .populate('department', 'name')
+      .limit(10 - suggestions.length);
+      
+      suggestions.push(...generalStudents);
+    }
+    
+    // Format suggestions for the response
+    const formattedSuggestions = suggestions.map(student => {
+      return {
+        id: student._id,
+        user: student.user,
+        matricNumber: student.matricNumber,
+        department: student.department,
+        level: student.level,
+        connectionReason: student.department && student.department._id.equals(student.department) 
+          ? 'Same department' 
+          : 'May know each other'
+      };
+    });
     
     res.status(200).json({
       success: true,
-      data: {
-        departmentSuggestions,
-        otherSuggestions
-      }
+      count: formattedSuggestions.length,
+      data: formattedSuggestions
     });
   } catch (error) {
     console.error('Error getting connection suggestions:', error);
@@ -539,37 +558,85 @@ exports.removeConnection = async (req, res) => {
 };
 
 /**
- * @desc    Get all conversations for the user
+ * @desc    Get my conversations
  * @route   GET /api/connections/conversations
  * @access  Private
  */
 exports.getMyConversations = async (req, res) => {
   try {
-    // Find all conversations where the user is a participant
-    const conversations = await Conversation.find({
-      participants: req.user.id,
-      isActive: true
-    })
-      .populate({
-        path: 'participants',
-        select: 'fullName email avatar',
-        match: { _id: { $ne: req.user.id } } // Only populate other participants
-      })
-      .sort({ 
-        'lastMessage.timestamp': -1 
+    // Make sure the user exists
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
+    }
+
+    // Check what fields are available in the Conversation schema
+    const schemaFields = Object.keys(conversationSchema.paths);
+    console.log('Available fields in Conversation schema:', schemaFields);
+
+    // Determine the correct field name for participants
+    let participantsField = 'participants';
+    if (!schemaFields.includes('participants')) {
+      // Look for alternatives like 'users', 'members', etc.
+      const possibleFields = ['users', 'members', 'people', 'user_ids'];
+      for (const field of possibleFields) {
+        if (schemaFields.includes(field)) {
+          participantsField = field;
+          console.log(`Using ${field} instead of participants`);
+          break;
+        }
+      }
+    }
+
+    const query = {};
+    query[participantsField] = req.user.id;
+
+    const populateOptions = [];
     
-    // Format conversations to include the other participant
+    if (schemaFields.includes(participantsField)) {
+      populateOptions.push({
+        path: participantsField,
+        select: 'fullName email profileImage avatar',
+        match: { _id: { $ne: req.user.id } },
+        strictPopulate: false
+      });
+    }
+    
+    if (schemaFields.includes('lastMessage')) {
+      populateOptions.push({
+        path: 'lastMessage',
+        strictPopulate: false
+      });
+    }
+    
+    if (schemaFields.includes('connection')) {
+      populateOptions.push({
+        path: 'connection',
+        strictPopulate: false
+      });
+    }
+
+    const conversations = await Conversation.find(query)
+      .populate(populateOptions)
+      .sort({ updatedAt: -1 });
+    
     const formattedConversations = conversations.map(conversation => {
-      const otherParticipant = conversation.participants[0]; // This should be the other user after filtering current user
+      let otherParticipant = null;
+      if (conversation[participantsField] && Array.isArray(conversation[participantsField])) {
+        const participants = conversation[participantsField].filter(p => p && p._id);
+        otherParticipant = participants.length > 0 ? participants[0] : null;
+      }
       
       return {
-        _id: conversation._id,
+        id: conversation._id,
         otherUser: otherParticipant,
         lastMessage: conversation.lastMessage,
-        unread: conversation.lastMessage && 
-                !conversation.lastMessage.read && 
-                conversation.lastMessage.sender.toString() !== req.user.id
+        updatedAt: conversation.updatedAt,
+        unreadCount: 0, 
+        connection: conversation.connection
       };
     });
     
@@ -588,11 +655,9 @@ exports.getMyConversations = async (req, res) => {
   }
 };
 
-/**
- * @desc    Get messages for a conversation
- * @route   GET /api/connections/conversations/:conversationId/messages
- * @access  Private
- */
+// @desc    Get messages for a conversation
+// @route   GET /api/connections/conversations/:conversationId/messages
+// @access  Private
 exports.getConversationMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
@@ -609,7 +674,7 @@ exports.getConversationMessages = async (req, res) => {
     }
     
     // Check if user is a participant in the conversation
-    if (!conversation.participants.includes(req.user.id)) {
+    if (!conversation.participants || !conversation.participants.includes(req.user.id)) {
       return res.status(403).json({
         success: false,
         message: 'You are not authorized to access this conversation'
@@ -644,6 +709,7 @@ exports.getConversationMessages = async (req, res) => {
       
       // If the last message was unread, update conversation's lastMessage.read
       if (conversation.lastMessage && 
+          conversation.lastMessage.sender && 
           conversation.lastMessage.sender.toString() !== req.user.id && 
           !conversation.lastMessage.read) {
         conversation.lastMessage.read = true;
@@ -655,12 +721,16 @@ exports.getConversationMessages = async (req, res) => {
     const total = await Message.countDocuments({ conversation: conversationId });
     
     // Get the other participant
-    const otherParticipant = conversation.participants.find(
+    const otherParticipant = conversation.participants && conversation.participants.find(
       p => p.toString() !== req.user.id
     );
     
-    const otherUser = await User.findById(otherParticipant)
-      .select('fullName email avatar');
+    // Get other participant's details if available
+    let participantInfo = null;
+    if (otherParticipant) {
+      participantInfo = await User.findById(otherParticipant)
+        .select('fullName email profileImage');
+    }
     
     res.status(200).json({
       success: true,
@@ -671,11 +741,8 @@ exports.getConversationMessages = async (req, res) => {
         pages: Math.ceil(total / parseInt(limit))
       },
       data: {
-        conversation: {
-          _id: conversation._id,
-          otherUser
-        },
-        messages: messages.reverse() // Reverse back to chronological order
+        messages,
+        otherParticipant: participantInfo
       }
     });
   } catch (error) {

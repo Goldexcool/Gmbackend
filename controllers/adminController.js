@@ -865,6 +865,9 @@ exports.getUserById = async (req, res) => {
  * @access  Private/Admin
  */
 exports.updateUser = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  
   try {
     const { id } = req.params;
     const {
@@ -872,12 +875,17 @@ exports.updateUser = async (req, res) => {
       email,
       phoneNumber,
       isActive,
-      profileImage
+      profileImage,
+      department,  // Added field
+      matricNumber, // Added field
+      staffId       // Added field
     } = req.body;
     
     // Find user
-    const user = await User.findById(id);
+    const user = await User.findById(id).session(session);
     if (!user) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({
         success: false,
         message: 'User not found'
@@ -889,9 +897,11 @@ exports.updateUser = async (req, res) => {
       const existingUser = await User.findOne({
         email,
         _id: { $ne: id }
-      });
+      }).session(session);
       
       if (existingUser) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           success: false,
           message: 'Email already in use'
@@ -899,7 +909,7 @@ exports.updateUser = async (req, res) => {
       }
     }
     
-    // Update user
+    // Update user basic info
     const updatedUser = await User.findByIdAndUpdate(
       id,
       {
@@ -909,15 +919,199 @@ exports.updateUser = async (req, res) => {
         isActive: isActive !== undefined ? isActive : user.isActive,
         profileImage: profileImage || user.profileImage
       },
-      { new: true }
+      { new: true, session }
     ).select('-password');
+    
+    // Handle role-specific updates
+    if (user.role === 'student') {
+      // If matricNumber or department is provided, update student profile
+      if (matricNumber || department) {
+        // Find student profile
+        const student = await Student.findOne({ user: id }).session(session);
+        
+        if (!student) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(404).json({
+            success: false,
+            message: 'Student profile not found'
+          });
+        }
+        
+        // Check if matric number is being changed and already exists
+        if (matricNumber && matricNumber !== student.matricNumber) {
+          const existingStudent = await Student.findOne({
+            matricNumber,
+            user: { $ne: id }
+          }).session(session);
+          
+          if (existingStudent) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              success: false,
+              message: 'Matriculation number already in use'
+            });
+          }
+        }
+        
+        // Resolve department ID from name or ID
+        let departmentId = undefined;
+        if (department) {
+          // If department is a string but not a valid ObjectId, try to find by name
+          if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+            const departmentDoc = await Department.findOne({
+              name: { $regex: new RegExp(`^${department}$`, 'i') }
+            }).session(session);
+            
+            if (!departmentDoc) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(404).json({
+                success: false,
+                message: `Department "${department}" not found. Please check the department name.`
+              });
+            }
+            
+            departmentId = departmentDoc._id;
+          } else {
+            // Verify department exists if ID is provided
+            const departmentExists = await Department.findById(department).session(session);
+            if (!departmentExists) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(404).json({
+                success: false,
+                message: 'Department not found with the provided ID'
+              });
+            }
+            departmentId = department;
+          }
+        }
+        
+        // Update student profile
+        await Student.findOneAndUpdate(
+          { user: id },
+          { 
+            matricNumber: matricNumber || student.matricNumber,
+            department: departmentId || student.department
+          },
+          { session }
+        );
+      }
+    } else if (user.role === 'lecturer' && staffId) {
+      // Handle lecturer staff ID update
+      const lecturer = await Lecturer.findOne({ user: id }).session(session);
+      
+      if (!lecturer) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({
+          success: false,
+          message: 'Lecturer profile not found'
+        });
+      }
+      
+      // Check if staff ID is being changed and already exists
+      if (staffId !== lecturer.staffId) {
+        const existingLecturer = await Lecturer.findOne({
+          staffId,
+          user: { $ne: id }
+        }).session(session);
+        
+        if (existingLecturer) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({
+            success: false,
+            message: 'Staff ID already in use'
+          });
+        }
+      }
+      
+      // Resolve department ID from name or ID
+      let departmentId = undefined;
+      if (department) {
+        // If department is a string but not a valid ObjectId, try to find by name
+        if (typeof department === 'string' && !mongoose.Types.ObjectId.isValid(department)) {
+          const departmentDoc = await Department.findOne({
+            name: { $regex: new RegExp(`^${department}$`, 'i') }
+          }).session(session);
+          
+          if (!departmentDoc) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({
+              success: false,
+              message: `Department "${department}" not found. Please check the department name.`
+            });
+          }
+          
+          departmentId = departmentDoc._id;
+        } else {
+          // Verify department exists if ID is provided
+          const departmentExists = await Department.findById(department).session(session);
+          if (!departmentExists) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({
+              success: false,
+              message: 'Department not found with the provided ID'
+            });
+          }
+          departmentId = department;
+        }
+      }
+      
+      // Update lecturer profile
+      await Lecturer.findOneAndUpdate(
+        { user: id },
+        { 
+          staffId: staffId || lecturer.staffId,
+          department: departmentId || lecturer.department
+        },
+        { session }
+      );
+    }
+    
+    await session.commitTransaction();
+    session.endSession();
+    
+    // Get updated user with role-specific data
+    let responseData = { user: updatedUser };
+    
+    if (user.role === 'student') {
+      const studentData = await Student.findOne({ user: id })
+        .populate('department', 'name code');
+      
+      if (studentData) {
+        responseData.student = {
+          matricNumber: studentData.matricNumber,
+          department: studentData.department,
+          level: studentData.level
+        };
+      }
+    } else if (user.role === 'lecturer') {
+      const lecturerData = await Lecturer.findOne({ user: id })
+        .populate('department', 'name code');
+      
+      if (lecturerData) {
+        responseData.lecturer = {
+          staffId: lecturerData.staffId,
+          department: lecturerData.department
+        };
+      }
+    }
     
     res.status(200).json({
       success: true,
       message: 'User updated successfully',
-      data: updatedUser
+      data: responseData
     });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    
     console.error('Error updating user:', error);
     res.status(500).json({
       success: false,

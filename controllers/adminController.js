@@ -1673,6 +1673,11 @@ exports.changeUserRole = async (req, res) => {
  * @route   POST /api/admin/users/:userId/reset-password
  * @access  Private/Admin
  */
+/**
+ * @desc    Reset user's password
+ * @route   POST /api/admin/users/:userId/reset-password
+ * @access  Private/Admin
+ */
 exports.resetUserPassword = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -1686,7 +1691,13 @@ exports.resetUserPassword = async (req, res) => {
       });
     }
     
-    // Find user
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid user ID format'
+      });
+    }
+    
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
@@ -1695,13 +1706,30 @@ exports.resetUserPassword = async (req, res) => {
       });
     }
     
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
     
-    // Update password
+    // Update password and save
     user.password = hashedPassword;
+    
+    if (user.passwordHistory) {
+      user.passwordHistory.push({
+        password: hashedPassword,
+        changedAt: new Date(),
+        changedBy: req.user.id 
+      });
+    }
+    
     await user.save();
+    
+    // Log this action
+    await SystemActivity.create({
+      user: req.user.id,
+      action: 'RESET_PASSWORD',
+      details: `Admin reset password for user: ${user.fullName} (${user.email})`,
+      affectedModel: 'User',
+      affectedId: userId
+    });
     
     res.status(200).json({
       success: true,

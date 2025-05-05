@@ -1160,21 +1160,39 @@ exports.deleteUser = async (req, res) => {
         // Store matric number for logging
         userData.matricNumber = student.matricNumber;
         
-        // Delete course rep assignments
-        await CourseRep.deleteMany({ student: student._id }, { session });
+        try {
+          // Delete course rep assignments if CourseRep model exists
+          if (mongoose.models.CourseRep) {
+            await mongoose.models.CourseRep.deleteMany({ student: student._id }, { session });
+          }
+        } catch (error) {
+          console.warn('Error deleting CourseRep data:', error.message);
+        }
         
         // Delete enrollments for student
         await Enrollment.deleteMany({ student: student._id }, { session });
         
-        // Remove student from any study groups
-        await StudyGroup.updateMany(
-          { members: student._id },
-          { $pull: { members: student._id } },
-          { session }
-        );
+        try {
+          // Remove student from any study groups if StudyGroup model exists
+          if (mongoose.models.StudyGroup) {
+            await mongoose.models.StudyGroup.updateMany(
+              { members: student._id },
+              { $pull: { members: student._id } },
+              { session }
+            );
+          }
+        } catch (error) {
+          console.warn('Error updating StudyGroup data:', error.message);
+        }
         
-        // Delete assignment submissions
-        await AssignmentSubmission.deleteMany({ student: student._id }, { session });
+        try {
+          // Delete assignment submissions if AssignmentSubmission model exists
+          if (mongoose.models.AssignmentSubmission) {
+            await mongoose.models.AssignmentSubmission.deleteMany({ student: student._id }, { session });
+          }
+        } catch (error) {
+          console.warn('Error deleting AssignmentSubmission data:', error.message);
+        }
         
         // Delete student record
         await Student.findByIdAndDelete(student._id, { session });
@@ -1196,45 +1214,90 @@ exports.deleteUser = async (req, res) => {
         // Delete schedules for this lecturer
         await Schedule.deleteMany({ lecturer: lecturer._id }, { session });
         
-        // Delete assignments created by this lecturer
-        await Assignment.deleteMany({ createdBy: id }, { session });
+        try {
+          // Delete assignments created by this lecturer if Assignment model exists
+          if (mongoose.models.Assignment) {
+            await mongoose.models.Assignment.deleteMany({ createdBy: id }, { session });
+          }
+        } catch (error) {
+          console.warn('Error deleting Assignment data:', error.message);
+        }
         
-        // Delete course resources created by this lecturer
-        await Resource.deleteMany({ uploadedBy: id }, { session });
+        try {
+          // Delete course resources created by this lecturer if Resource model exists
+          if (mongoose.models.Resource) {
+            await mongoose.models.Resource.deleteMany({ uploadedBy: id }, { session });
+          }
+        } catch (error) {
+          console.warn('Error deleting Resource data:', error.message);
+        }
         
-        // Delete tasks created by this lecturer
-        await Task.deleteMany({ createdBy: lecturer._id }, { session });
+        try {
+          // Delete tasks created by this lecturer if Task model exists
+          if (mongoose.models.Task) {
+            await mongoose.models.Task.deleteMany({ createdBy: lecturer._id }, { session });
+          }
+        } catch (error) {
+          console.warn('Error deleting Task data:', error.message);
+        }
         
         // Delete lecturer record
         await Lecturer.findByIdAndDelete(lecturer._id, { session });
       }
     }
     
-    // Delete chat messages
-    await Chat.updateMany(
-      { "messages.sender": id },
-      { $pull: { messages: { sender: id } } },
-      { session }
-    );
+    try {
+      // Delete chat messages if Chat model exists
+      if (mongoose.models.Chat) {
+        await mongoose.models.Chat.updateMany(
+          { "messages.sender": id },
+          { $pull: { messages: { sender: id } } },
+          { session }
+        );
+      }
+    } catch (error) {
+      console.warn('Error updating Chat data:', error.message);
+    }
     
-    // Delete user's announcements
-    await Announcement.deleteMany({ author: id }, { session });
+    try {
+      // Delete user's announcements if Announcement model exists
+      if (mongoose.models.Announcement) {
+        await mongoose.models.Announcement.deleteMany({ author: id }, { session });
+      }
+    } catch (error) {
+      console.warn('Error deleting Announcement data:', error.message);
+    }
     
-    // Delete user's posts and comments
-    await Post.deleteMany({ author: id }, { session });
-    await Comment.deleteMany({ author: id }, { session });
+    try {
+      // Delete user's posts and comments if Post and Comment models exist
+      if (mongoose.models.Post) {
+        await mongoose.models.Post.deleteMany({ author: id }, { session });
+      }
+      
+      if (mongoose.models.Comment) {
+        await mongoose.models.Comment.deleteMany({ author: id }, { session });
+      }
+    } catch (error) {
+      console.warn('Error deleting Post/Comment data:', error.message);
+    }
     
     // Finally delete user
     await User.findByIdAndDelete(id, { session });
     
-    // Log the deletion
-    await SystemActivity.create([{
-      user: req.user.id,
-      action: 'DELETE_USER',
-      details: `Deleted user: ${JSON.stringify(userData)}`,
-      affectedModel: 'User',
-      affectedId: id
-    }], { session });
+    try {
+      // Log the deletion
+      if (mongoose.models.SystemActivity) {
+        await mongoose.models.SystemActivity.create([{
+          user: req.user.id,
+          action: 'DELETE_USER',
+          details: `Deleted user: ${JSON.stringify(userData)}`,
+          affectedModel: 'User',
+          affectedId: id
+        }], { session });
+      }
+    } catch (error) {
+      console.warn('Error logging system activity:', error.message);
+    }
     
     await session.commitTransaction();
     session.endSession();

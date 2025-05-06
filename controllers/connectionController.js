@@ -194,7 +194,11 @@ exports.getMyConnections = async (req, res) => {
         path: 'recipient',
         select: 'fullName email avatar'
       })
-      .populate('conversation')
+      .populate({
+        path: 'conversation',
+        select: '_id',
+        options: { strictPopulate: false } // Set this option to bypass schema check
+      })
       .sort({ responseDate: -1 });
     
     // Format connections to show the other person in each connection
@@ -374,10 +378,13 @@ exports.acceptConnectionRequest = async (req, res) => {
     
     // Create a conversation for the connection
     const conversation = await Conversation.create([{
-      connection: connection._id,
       participants: [connection.requester, connection.recipient],
       isActive: true
     }], { session });
+
+    // Link conversation to connection
+    connection.conversation = conversation[0]._id;
+    await connection.save({ session });
     
     await session.commitTransaction();
     session.endSession();
@@ -1198,3 +1205,49 @@ exports.createConversation = async (req, res) => {
     });
   }
 };
+
+/**
+ * @desc    Migrate connections to conversations
+ * @access  Private
+ */
+async function migrateConnectionsToConversations() {
+  try {
+    // Find all accepted connections without a conversation
+    const connections = await Connection.find({
+      status: 'accepted',
+      conversation: { $exists: false }
+    });
+    
+    console.log(`Found ${connections.length} connections without conversations`);
+    
+    // Create conversations for each connection
+    for (const connection of connections) {
+      // Check if conversation already exists
+      const existingConversation = await Conversation.findOne({
+        participants: { $all: [connection.requester, connection.recipient] }
+      });
+      
+      if (existingConversation) {
+        // Link existing conversation
+        connection.conversation = existingConversation._id;
+        await connection.save();
+        console.log(`Linked existing conversation to connection ${connection._id}`);
+      } else {
+        // Create new conversation
+        const newConversation = await Conversation.create({
+          participants: [connection.requester, connection.recipient],
+          isActive: true
+        });
+        
+        // Link to connection
+        connection.conversation = newConversation._id;
+        await connection.save();
+        console.log(`Created new conversation for connection ${connection._id}`);
+      }
+    }
+    
+    console.log('Migration complete!');
+  } catch (error) {
+    console.error('Error in migration:', error);
+  }
+}

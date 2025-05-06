@@ -16,12 +16,17 @@ const ConnectionSchema = new mongoose.Schema({
     enum: ['pending', 'accepted', 'rejected', 'blocked'],
     default: 'pending'
   },
+  conversation: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Conversation'
+  },
   requestDate: {
     type: Date,
     default: Date.now
   },
   responseDate: Date,
-  lastInteraction: Date
+  lastInteraction: Date,
+  message: String // For request message
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

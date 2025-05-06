@@ -30,9 +30,7 @@ exports.getConnectionSuggestions = async (req, res) => {
     
     // Initialize query to find all students except the current user
     let query = {
-      user: { $ne: req.user.id },
-      // Avoid suggesting users who already have a connection with the current user
-      _id: { $nin: [] }
+      user: { $ne: req.user.id }
     };
     
     // Find all existing connections
@@ -45,7 +43,7 @@ exports.getConnectionSuggestions = async (req, res) => {
     
     // Get IDs of all users the current user is already connected with
     const connectedUserIds = existingConnections.map(conn => {
-      return conn.requester.toString() === req.user.id 
+      return conn.requester.toString() === req.user.id.toString()
         ? conn.recipient 
         : conn.requester;
     });
@@ -109,9 +107,7 @@ exports.getConnectionSuggestions = async (req, res) => {
         matricNumber: student.matricNumber,
         department: student.department,
         level: student.level,
-        connectionReason: student.department && student.department._id.equals(student.department) 
-          ? 'Same department' 
-          : 'May know each other'
+        connectionReason: student.department ? 'Same department' : 'May know each other'
       };
     });
     

@@ -1009,6 +1009,11 @@ exports.searchStudents = async (req, res) => {
  * @route   GET /api/connections/student/:studentId
  * @access  Private
  */
+/**
+ * @desc    Get detailed student profile with department information
+ * @route   GET /api/connections/student/:studentId
+ * @access  Private
+ */
 exports.getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -1020,19 +1025,44 @@ exports.getStudentProfile = async (req, res) => {
       });
     }
     
-    // Find the user and student record in parallel to improve performance
-    const [student, studentRecord] = await Promise.all([
-      User.findById(studentId).select('fullName email profileImage avatar level'),
-      Student.findOne({ user: studentId })
-        .populate('department', 'name')
-        .select('matricNumber department')
-    ]);
+    // Find the user record
+    const student = await User.findById(studentId)
+      .select('fullName email profileImage avatar level');
     
     if (!student) {
       return res.status(404).json({
         success: false,
         message: 'Student not found'
       });
+    }
+    
+    // Find student record with explicit population of department
+    const studentRecord = await Student.findOne({ user: studentId })
+      .populate({
+        path: 'department',
+        select: 'name code faculty',
+        options: { strictPopulate: false }
+      });
+    
+    console.log('Student Record:', JSON.stringify(studentRecord, null, 2));
+    
+    // Extract department info with safeguards
+    let departmentName = 'Not available';
+    let departmentId = null;
+    
+    if (studentRecord && studentRecord.department) {
+      // Check if department is a full object or just an ID
+      if (typeof studentRecord.department === 'object') {
+        departmentName = studentRecord.department.name || 'Not available';
+        departmentId = studentRecord.department._id;
+      } else {
+        // If department is just an ID, fetch the department separately
+        const departmentDetails = await Department.findById(studentRecord.department);
+        if (departmentDetails) {
+          departmentName = departmentDetails.name;
+          departmentId = departmentDetails._id;
+        }
+      }
     }
     
     // Format the response with just the essential fields
@@ -1044,8 +1074,8 @@ exports.getStudentProfile = async (req, res) => {
       avatar: student.avatar,
       level: student.level,
       matricNumber: studentRecord?.matricNumber || 'Not available',
-      department: studentRecord?.department?.name || 'Not available',
-      departmentId: studentRecord?.department?._id || null
+      department: departmentName,
+      departmentId: departmentId
     };
     
     res.status(200).json({

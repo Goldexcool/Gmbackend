@@ -4,6 +4,10 @@ const Connection = require('../models/Connection');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const Department = require('../models/Department');
+const Post = require('../models/Post');
+const Question = require('../models/Question');
+const Answer = require('../models/Answer');
+const ProfileView = require('../models/ProfileView');
 const mongoose = require('mongoose');
 
 const conversationSchema = mongoose.model('Conversation').schema;
@@ -1001,7 +1005,7 @@ exports.searchStudents = async (req, res) => {
 };
 
 /**
- * @desc    Get detailed student profile
+ * @desc    Get detailed student profile with expanded information
  * @route   GET /api/connections/student/:studentId
  * @access  Private
  */
@@ -1009,10 +1013,8 @@ exports.getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    // Log the requested student ID
     console.log('Looking up student profile for ID:', studentId);
     
-    // Validate ID format
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
       return res.status(400).json({
         success: false,
@@ -1020,9 +1022,13 @@ exports.getStudentProfile = async (req, res) => {
       });
     }
     
-    // Find the user without populating department
-    const student = await User.findById(studentId)
-      .select('-password -verificationToken -resetPasswordToken -resetPasswordExpire');
+    // Find the user and student record in parallel to improve performance
+    const [student, studentRecord] = await Promise.all([
+      User.findById(studentId).select('-password -verificationToken -resetPasswordToken -resetPasswordExpire'),
+      Student.findOne({ user: studentId })
+        .populate('department', 'name code faculty')
+        .populate('courses', 'code title credits level')
+    ]);
     
     if (!student) {
       console.log(`Student not found for ID: ${studentId}`);
@@ -1032,47 +1038,179 @@ exports.getStudentProfile = async (req, res) => {
       });
     }
     
-    // Find the student record to get department info
-    const studentRecord = await Student.findOne({ user: studentId })
-      .populate('department', 'name');
-    
-    // Check if requesting user has a connection with this student
-    let connectionStatus = null;
-    let connectionId = null;
-    
-    // Find existing connection
+    // Check if viewing user can see full profile (connections, shared department, admin)
     const connection = await Connection.findOne({
       $or: [
         { requester: req.user.id, recipient: studentId },
         { requester: studentId, recipient: req.user.id }
       ]
-    });
+    }).populate('conversation');
     
-    if (connection) {
-      connectionStatus = connection.status;
-      connectionId = connection._id;
+    const connectionStatus = connection ? connection.status : null;
+    const canSeeFullProfile = 
+      req.user.role === 'admin' || 
+      connectionStatus === 'accepted' || 
+      (req.user.role === 'student' && studentRecord && 
+       (await Student.findOne({ user: req.user.id }))?.department?.toString() === 
+       studentRecord.department?.toString());
+    
+    // Fetch additional data only if user can see full profile
+    let stats = null;
+    let recentPosts = [];
+    let recentQuestions = [];
+    let mutualConnections = [];
+    let mutualConnectionsCount = 0;
+    
+    if (canSeeFullProfile) {
+      // These queries can run in parallel to improve performance
+      const [
+        postsCount,
+        questionsCount, 
+        answersCount,
+        connectionsCount,
+        fetchedRecentPosts,
+        fetchedRecentQuestions,
+        userConnections,
+        studentConnections
+      ] = await Promise.all([
+        Post.countDocuments({ author: studentId }),
+        Question.countDocuments({ author: studentId }),
+        Answer.countDocuments({ author: studentId }),
+        Connection.countDocuments({
+          $or: [
+            { requester: studentId, status: 'accepted' },
+            { recipient: studentId, status: 'accepted' }
+          ]
+        }),
+        Post.find({ author: studentId })
+          .sort('-createdAt')
+          .limit(3)
+          .select('title slug content createdAt likes'),
+        Question.find({ author: studentId })
+          .sort('-createdAt')
+          .limit(3)
+          .select('title slug content createdAt upvotes'),
+        Connection.find({
+          $or: [
+            { requester: req.user.id, status: 'accepted' },
+            { recipient: req.user.id, status: 'accepted' }
+          ]
+        }),
+        Connection.find({
+          $or: [
+            { requester: studentId, status: 'accepted' },
+            { recipient: studentId, status: 'accepted' }
+          ]
+        })
+      ]);
+      
+      stats = {
+        posts: postsCount,
+        questions: questionsCount,
+        answers: answersCount,
+        connections: connectionsCount
+      };
+      
+      recentPosts = fetchedRecentPosts;
+      recentQuestions = fetchedRecentQuestions;
+      
+      // Process mutual connections
+      const userConnectionIds = userConnections.map(conn => 
+        conn.requester.toString() === req.user.id.toString() 
+          ? conn.recipient.toString()
+          : conn.requester.toString()
+      );
+      
+      const studentConnectionIds = studentConnections.map(conn => 
+        conn.requester.toString() === studentId.toString()
+          ? conn.recipient.toString()
+          : conn.requester.toString()
+      );
+      
+      const mutualConnectionIds = userConnectionIds.filter(id => 
+        studentConnectionIds.includes(id)
+      );
+      
+      mutualConnectionsCount = mutualConnectionIds.length;
+      
+      if (mutualConnectionIds.length > 0) {
+        mutualConnections = await User.find({ _id: { $in: mutualConnectionIds } })
+          .select('fullName email avatar profileImage')
+          .limit(5);
+      }
     }
     
-    // Format the response
+    // Track profile view (could be used for "who viewed my profile" feature)
+    await recordProfileView(req.user.id, studentId);
+    
+    // Get the student's main department and faculty info
+    const departmentInfo = studentRecord?.department ? {
+      name: studentRecord.department.name,
+      id: studentRecord.department._id,
+      code: studentRecord.department.code,
+      faculty: studentRecord.department.faculty
+    } : null;
+    
+    // Format the response based on permission level
     const formattedProfile = {
       id: student._id,
       fullName: student.fullName,
-      email: student.email,
+      email: canSeeFullProfile ? student.email : undefined,
       profileImage: student.profileImage,
       avatar: student.avatar,
-      department: studentRecord && studentRecord.department ? 
-        studentRecord.department.name : null,
-      departmentId: studentRecord && studentRecord.department ? 
-        studentRecord.department._id : null,
+      role: student.role,
+      createdAt: student.createdAt,
+      lastActive: student.lastActive || student.updatedAt,
+      
+      // Academic information
+      department: departmentInfo?.name,
+      departmentId: departmentInfo?.id,
+      departmentCode: departmentInfo?.code,
+      faculty: departmentInfo?.faculty,
       level: student.level,
+      matricNumber: studentRecord?.matricNumber,
+      graduationYear: studentRecord?.graduationYear,
+      
+      // Include courses only for full profile view
+      courses: canSeeFullProfile ? (studentRecord?.courses || []) : undefined,
+      
+      // Personal information (some fields only for full profile)
       bio: student.bio,
-      interests: student.interests,
-      skills: student.skills,
-      projects: student.projects,
-      achievements: student.achievements,
-      socials: student.socials,
+      interests: student.interests || [],
+      skills: student.skills || [],
+      projects: canSeeFullProfile ? (student.projects || []) : undefined,
+      achievements: canSeeFullProfile ? (student.achievements || []) : undefined,
+      socials: canSeeFullProfile ? (student.socials || {}) : undefined,
+      
+      // Activity statistics (only for full profile)
+      stats: canSeeFullProfile ? stats : undefined,
+      recentActivity: canSeeFullProfile ? {
+        posts: recentPosts,
+        questions: recentQuestions
+      } : undefined,
+      
+      // Connection information
       connectionStatus,
-      connectionId
+      connectionId: connection?._id,
+      conversationId: connection?.conversation?._id,
+      mutualConnections: canSeeFullProfile ? mutualConnections.map(user => ({
+        id: user._id,
+        fullName: user.fullName,
+        avatar: user.avatar || user.profileImage
+      })) : undefined,
+      mutualConnectionsCount: canSeeFullProfile ? mutualConnectionsCount : undefined,
+      
+      // Additional fields
+      isSameProgram: req.user.role === 'student' && studentRecord && 
+        (await Student.findOne({ user: req.user.id }))?.department?.toString() === 
+        studentRecord.department?.toString(),
+      
+      // Expanded information
+      isOnline: isUserOnline(studentId),
+      viewerCanMessage: canSeeFullProfile || req.user.role === 'admin',
+      profileViewsCount: canSeeFullProfile ? (await ProfileView.countDocuments({ viewed: studentId })) : undefined,
+      joinedSince: formatTimeAgo(student.createdAt),
+      lastActiveSince: formatTimeAgo(student.lastActive || student.updatedAt)
     };
     
     res.status(200).json({
@@ -1088,6 +1226,53 @@ exports.getStudentProfile = async (req, res) => {
     });
   }
 };
+
+// Helper function to record profile views
+async function recordProfileView(viewerId, viewedId) {
+  try {
+    // Don't record if viewing own profile
+    if (viewerId === viewedId) return;
+    
+    // Create or update the profile view
+    await ProfileView.findOneAndUpdate(
+      { viewer: viewerId, viewed: viewedId },
+      { $set: { viewedAt: new Date() } },
+      { upsert: true, new: true }
+    );
+  } catch (err) {
+    console.error('Error recording profile view:', err);
+  }
+}
+
+// Helper to format time ago
+function formatTimeAgo(date) {
+  if (!date) return 'Unknown';
+  
+  const now = new Date();
+  const diff = now - new Date(date);
+  
+  // Convert milliseconds to appropriate units
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const months = Math.floor(days / 30);
+  const years = Math.floor(months / 12);
+  
+  if (years > 0) return `${years} ${years === 1 ? 'year' : 'years'} ago`;
+  if (months > 0) return `${months} ${months === 1 ? 'month' : 'months'} ago`;
+  if (days > 0) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+  if (hours > 0) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  if (minutes > 0) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  return 'Just now';
+}
+
+// Helper to check if a user is online (stub - implement with your online tracking system)
+function isUserOnline(userId) {
+  // This would connect to your online user tracking system
+  // For now, return a placeholder
+  return false;
+}
 
 /**
  * @desc    Get departments for search filters

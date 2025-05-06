@@ -318,12 +318,22 @@ exports.createStudyGroup = async (req, res) => {
   }
 };
 
-// @desc    Get student profile
-// @route   GET /api/students/:id
-// @access  Private
+/**
+ * @desc    Get student profile
+ * @route   GET /api/students/:id
+ * @access  Private
+ */
 exports.getStudentProfile = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Validate the ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid student ID format'
+      });
+    }
     
     // Check if user is authorized
     if (req.user.role !== 'admin' && req.user.id !== id) {
@@ -333,10 +343,12 @@ exports.getStudentProfile = async (req, res) => {
       });
     }
 
+    // Find student with fully populated data
     const student = await Student.findOne({ user: id })
-      .populate('user', 'fullName email avatar')
-      .populate('courses', 'name code')
-      .populate('connections', 'user');
+      .populate('user', 'fullName email avatar profileImage bio interests')
+      .populate('courses', 'name code title credits level semester')
+      .populate('connections', 'user')
+      .populate('department', 'name code faculty');
       
     if (!student) {
       return res.status(404).json({
@@ -345,20 +357,62 @@ exports.getStudentProfile = async (req, res) => {
       });
     }
 
-    const formattedDepartment = await formatDepartmentInfo(student.department);
+    // Format department info
+    const formattedDepartment = student.department ? {
+      id: student.department._id,
+      name: student.department.name,
+      code: student.department.code,
+      faculty: student.department.faculty
+    } : await formatDepartmentInfo(student.department);
+    
+    // Get additional statistics for the student
+    const [taskCount, courseCount, connectionCount] = await Promise.all([
+      Task.countDocuments({ user: id, status: { $ne: 'completed' } }),
+      student.courses ? student.courses.length : 0,
+      student.connections ? student.connections.length : 0
+    ]);
+    
+    // Format the response
+    const studentData = student.toObject();
+    
+    // Add statistics
+    studentData.stats = {
+      pendingTasks: taskCount,
+      enrolledCourses: courseCount,
+      connections: connectionCount
+    };
+    
+    // Format courses by semester if available
+    if (studentData.courses && studentData.courses.length > 0) {
+      const coursesBySemester = {};
+      
+      studentData.courses.forEach(course => {
+        const semesterKey = course.semester || 'Unassigned';
+        
+        if (!coursesBySemester[semesterKey]) {
+          coursesBySemester[semesterKey] = [];
+        }
+        
+        coursesBySemester[semesterKey].push(course);
+      });
+      
+      studentData.coursesBySemester = coursesBySemester;
+    }
 
     res.status(200).json({
       success: true,
       data: {
-        student,
-        formattedDepartment
+        student: studentData,
+        department: formattedDepartment,
+        lastUpdated: new Date()
       }
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching student profile:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error',
+      error: error.message
     });
   }
 };

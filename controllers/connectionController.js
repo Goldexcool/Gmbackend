@@ -1013,8 +1013,6 @@ exports.getStudentProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    console.log('Looking up student profile for ID:', studentId);
-    
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
       return res.status(400).json({
         success: false,
@@ -1024,193 +1022,30 @@ exports.getStudentProfile = async (req, res) => {
     
     // Find the user and student record in parallel to improve performance
     const [student, studentRecord] = await Promise.all([
-      User.findById(studentId).select('-password -verificationToken -resetPasswordToken -resetPasswordExpire'),
+      User.findById(studentId).select('fullName email profileImage avatar level'),
       Student.findOne({ user: studentId })
-        .populate('department', 'name code faculty')
-        .populate('courses', 'code title credits level')
+        .populate('department', 'name')
+        .select('matricNumber department')
     ]);
     
     if (!student) {
-      console.log(`Student not found for ID: ${studentId}`);
       return res.status(404).json({
         success: false,
         message: 'Student not found'
       });
     }
     
-    // Check if viewing user can see full profile (connections, shared department, admin)
-    const connection = await Connection.findOne({
-      $or: [
-        { requester: req.user.id, recipient: studentId },
-        { requester: studentId, recipient: req.user.id }
-      ]
-    }).populate('conversation');
-    
-    const connectionStatus = connection ? connection.status : null;
-    const canSeeFullProfile = 
-      req.user.role === 'admin' || 
-      connectionStatus === 'accepted' || 
-      (req.user.role === 'student' && studentRecord && 
-       (await Student.findOne({ user: req.user.id }))?.department?.toString() === 
-       studentRecord.department?.toString());
-    
-    // Fetch additional data only if user can see full profile
-    let stats = null;
-    let recentPosts = [];
-    let recentQuestions = [];
-    let mutualConnections = [];
-    let mutualConnectionsCount = 0;
-    
-    if (canSeeFullProfile) {
-      // These queries can run in parallel to improve performance
-      const [
-        postsCount,
-        questionsCount, 
-        answersCount,
-        connectionsCount,
-        fetchedRecentPosts,
-        fetchedRecentQuestions,
-        userConnections,
-        studentConnections
-      ] = await Promise.all([
-        Post.countDocuments({ author: studentId }),
-        Question.countDocuments({ author: studentId }),
-        Answer.countDocuments({ author: studentId }),
-        Connection.countDocuments({
-          $or: [
-            { requester: studentId, status: 'accepted' },
-            { recipient: studentId, status: 'accepted' }
-          ]
-        }),
-        Post.find({ author: studentId })
-          .sort('-createdAt')
-          .limit(3)
-          .select('title slug content createdAt likes'),
-        Question.find({ author: studentId })
-          .sort('-createdAt')
-          .limit(3)
-          .select('title slug content createdAt upvotes'),
-        Connection.find({
-          $or: [
-            { requester: req.user.id, status: 'accepted' },
-            { recipient: req.user.id, status: 'accepted' }
-          ]
-        }),
-        Connection.find({
-          $or: [
-            { requester: studentId, status: 'accepted' },
-            { recipient: studentId, status: 'accepted' }
-          ]
-        })
-      ]);
-      
-      stats = {
-        posts: postsCount,
-        questions: questionsCount,
-        answers: answersCount,
-        connections: connectionsCount
-      };
-      
-      recentPosts = fetchedRecentPosts;
-      recentQuestions = fetchedRecentQuestions;
-      
-      // Process mutual connections
-      const userConnectionIds = userConnections.map(conn => 
-        conn.requester.toString() === req.user.id.toString() 
-          ? conn.recipient.toString()
-          : conn.requester.toString()
-      );
-      
-      const studentConnectionIds = studentConnections.map(conn => 
-        conn.requester.toString() === studentId.toString()
-          ? conn.recipient.toString()
-          : conn.requester.toString()
-      );
-      
-      const mutualConnectionIds = userConnectionIds.filter(id => 
-        studentConnectionIds.includes(id)
-      );
-      
-      mutualConnectionsCount = mutualConnectionIds.length;
-      
-      if (mutualConnectionIds.length > 0) {
-        mutualConnections = await User.find({ _id: { $in: mutualConnectionIds } })
-          .select('fullName email avatar profileImage')
-          .limit(5);
-      }
-    }
-    
-    // Track profile view (could be used for "who viewed my profile" feature)
-    await recordProfileView(req.user.id, studentId);
-    
-    // Get the student's main department and faculty info
-    const departmentInfo = studentRecord?.department ? {
-      name: studentRecord.department.name,
-      id: studentRecord.department._id,
-      code: studentRecord.department.code,
-      faculty: studentRecord.department.faculty
-    } : null;
-    
-    // Format the response based on permission level
+    // Format the response with just the essential fields
     const formattedProfile = {
       id: student._id,
       fullName: student.fullName,
-      email: canSeeFullProfile ? student.email : undefined,
+      email: student.email,
       profileImage: student.profileImage,
       avatar: student.avatar,
-      role: student.role,
-      createdAt: student.createdAt,
-      lastActive: student.lastActive || student.updatedAt,
-      
-      // Academic information
-      department: departmentInfo?.name,
-      departmentId: departmentInfo?.id,
-      departmentCode: departmentInfo?.code,
-      faculty: departmentInfo?.faculty,
       level: student.level,
-      matricNumber: studentRecord?.matricNumber,
-      graduationYear: studentRecord?.graduationYear,
-      
-      // Include courses only for full profile view
-      courses: canSeeFullProfile ? (studentRecord?.courses || []) : undefined,
-      
-      // Personal information (some fields only for full profile)
-      bio: student.bio,
-      interests: student.interests || [],
-      skills: student.skills || [],
-      projects: canSeeFullProfile ? (student.projects || []) : undefined,
-      achievements: canSeeFullProfile ? (student.achievements || []) : undefined,
-      socials: canSeeFullProfile ? (student.socials || {}) : undefined,
-      
-      // Activity statistics (only for full profile)
-      stats: canSeeFullProfile ? stats : undefined,
-      recentActivity: canSeeFullProfile ? {
-        posts: recentPosts,
-        questions: recentQuestions
-      } : undefined,
-      
-      // Connection information
-      connectionStatus,
-      connectionId: connection?._id,
-      conversationId: connection?.conversation?._id,
-      mutualConnections: canSeeFullProfile ? mutualConnections.map(user => ({
-        id: user._id,
-        fullName: user.fullName,
-        avatar: user.avatar || user.profileImage
-      })) : undefined,
-      mutualConnectionsCount: canSeeFullProfile ? mutualConnectionsCount : undefined,
-      
-      // Additional fields
-      isSameProgram: req.user.role === 'student' && studentRecord && 
-        (await Student.findOne({ user: req.user.id }))?.department?.toString() === 
-        studentRecord.department?.toString(),
-      
-      // Expanded information
-      isOnline: isUserOnline(studentId),
-      viewerCanMessage: canSeeFullProfile || req.user.role === 'admin',
-      profileViewsCount: canSeeFullProfile ? (await ProfileView.countDocuments({ viewed: studentId })) : undefined,
-      joinedSince: formatTimeAgo(student.createdAt),
-      lastActiveSince: formatTimeAgo(student.lastActive || student.updatedAt)
+      matricNumber: studentRecord?.matricNumber || 'Not available',
+      department: studentRecord?.department?.name || 'Not available',
+      departmentId: studentRecord?.department?._id || null
     };
     
     res.status(200).json({

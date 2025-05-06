@@ -1,46 +1,35 @@
 const mongoose = require('mongoose');
 
 const ConversationSchema = new mongoose.Schema({
-  // For AI Conversations
+  // User who owns this conversation (for AI chats)
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  // For Connection Conversations (between users)
+  // For peer-to-peer conversations
   participants: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  // Title of the conversation
   title: {
     type: String,
     default: 'New Conversation'
   },
-  // For AI conversations
+  // AI model used (for AI conversations)
   model: {
     type: String,
-    default: 'gemini-1.5-flash'
+    default: 'gpt-3.5-turbo'
   },
-  // For AI conversations
+  // Messages in the conversation
   messages: [{
-    role: {
-      type: String,
-      enum: ['user', 'assistant'],
-      required: true
-    },
-    content: {
-      type: String,
-      required: true
-    },
-    timestamp: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  // For connection messages (between users)
-  lastMessage: {
     sender: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+      ref: 'User' 
+    },
+    isAI: {
+      type: Boolean,
+      default: false
     },
     text: String,
     timestamp: {
@@ -51,12 +40,20 @@ const ConversationSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     }
+  }],
+  // Last message for quick display
+  lastMessage: {
+    sender: mongoose.Schema.Types.ObjectId,
+    text: String,
+    timestamp: Date,
+    read: Boolean
   },
-  // Reference to related connection if applicable
+  // Related connection (for peer-to-peer)
   connection: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Connection'
   },
+  // Is the conversation active
   isActive: {
     type: Boolean,
     default: true
@@ -64,5 +61,13 @@ const ConversationSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// Check if conversation is between two users
+ConversationSchema.statics.findBetweenUsers = async function(user1Id, user2Id) {
+  return this.findOne({
+    participants: { $all: [user1Id, user2Id] },
+    isActive: true
+  });
+};
 
 module.exports = mongoose.model('Conversation', ConversationSchema);

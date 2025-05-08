@@ -3,6 +3,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios'); 
 const { textModel, complexModel } = require('../utils/aiModels');
 const Conversation = require('../models/Conversation');
 

@@ -4,9 +4,7 @@ const resourceController = require('../controllers/resourceController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const fileUpload = require('../middleware/fileUpload');
 
-// Apply auth middleware to all routes
 router.use(protect);
-// Only allow students and lecturers (not admins) to access resources
 router.use((req, res, next) => {
   if (req.user && (req.user.role === 'student' || req.user.role === 'lecturer')) {
     next();
@@ -18,12 +16,10 @@ router.use((req, res, next) => {
   }
 });
 
-// Routes for both students and lecturers
 router.get('/search', resourceController.searchResources);
 router.get('/:id', resourceController.getResourceDetail);
 router.get('/:id/download', resourceController.downloadResource);
 
-// Routes for lecturers only
 router.post(
   '/',
   authorize('lecturer'),
@@ -31,7 +27,6 @@ router.post(
   resourceController.uploadResource
 );
 
-// Route for students (with special processing for student uploads)
 router.post(
   '/student-upload',
   authorize('student'),
@@ -43,5 +38,8 @@ router.post(
 router.post('/:id/save', resourceController.saveResource);
 router.post('/:id/rate', resourceController.rateResource);
 router.post('/:id/share', resourceController.shareResource);
+
+// Example implementation that would be needed
+router.post('/external/save', resourceController.saveExternalResource);
 
 module.exports = router;

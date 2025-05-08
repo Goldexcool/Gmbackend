@@ -6,6 +6,9 @@ const cors = require('cors');
 const http = require('http');
 const socketIo = require('socket.io');
 
+// Add this at the top of your server.js
+mongoose.set('strictQuery', false);
+
 // Import models - make sure these are defined before using them
 const User = require('./models/User');
 const Course = require('./models/Course');
@@ -48,11 +51,17 @@ const io = socketIo(server);
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 10000, // Increase timeout
+  socketTimeoutMS: 45000 // Increase socket timeout
 })
 .then(() => console.log('MongoDB connected'))
 .catch(err => {
-  console.error('MongoDB connection error:', err);
-  process.exit(1);
+  console.log('MongoDB connection error details:', {
+    name: err.name,
+    message: err.message,
+    code: err.code,
+    reason: err.reason ? JSON.stringify(err.reason, null, 2) : 'No reason provided'
+  });
 });
 
 // Function to check and fix MongoDB indexes

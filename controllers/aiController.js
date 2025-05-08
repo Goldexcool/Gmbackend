@@ -4,9 +4,9 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const { textModel, complexModel } = require('../utils/aiModels');
-const Conversation = require('../models/Conversation'); 
+const Conversation = require('../models/Conversation');
 
-const API_VERSION = "v1beta"; 
+const API_VERSION = "v1beta";
 
 let pdfParse;
 let mammoth;
@@ -31,7 +31,7 @@ if (!fs.existsSync(uploadsDir)) {
 // File upload configuration
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: function(req, file, cb) {
+  filename: function (req, file, cb) {
     cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
   }
 });
@@ -40,7 +40,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: { fileSize: 10000000 }, // 10MB limit
-  fileFilter: function(req, file, cb) {
+  fileFilter: function (req, file, cb) {
     // Allowed extensions
     const filetypes = /pdf|doc|docx|txt/;
     // Check extension
@@ -61,7 +61,7 @@ async function extractTextFromPDF(filePath) {
   if (!pdfParse) {
     throw new Error('PDF processing is not available. Please install pdf-parse package.');
   }
-  
+
   const dataBuffer = fs.readFileSync(filePath);
   try {
     const data = await pdfParse(dataBuffer);
@@ -77,7 +77,7 @@ async function extractTextFromDOCX(filePath) {
   if (!mammoth) {
     throw new Error('DOCX processing is not available. Please install mammoth package.');
   }
-  
+
   try {
     const result = await mammoth.extractRawText({ path: filePath });
     return result.value;
@@ -93,19 +93,19 @@ async function extractTextFromDOCX(filePath) {
 exports.generateText = async (req, res) => {
   try {
     const { prompt, maxTokens = 800 } = req.body;
-    
+
     if (!prompt) {
       return res.status(400).json({
         success: false,
         message: 'Please provide a prompt'
       });
     }
-    
+
     // Use the faster model for simple text generation
     const result = await textModel.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
-    
+
     res.status(200).json({
       success: true,
       model: "gemini-1.5-flash",
@@ -129,14 +129,14 @@ exports.generateText = async (req, res) => {
 exports.generateQuiz = async (req, res) => {
   try {
     const { content, numQuestions = 5, difficulty = 'medium' } = req.body;
-    
+
     if (!content) {
       return res.status(400).json({
         success: false,
         message: 'Please provide content for quiz generation'
       });
     }
-    
+
     // Create prompt for quiz generation
     const quizPrompt = `
       Create a ${difficulty} difficulty quiz with ${numQuestions} questions based on this content:
@@ -149,16 +149,16 @@ exports.generateQuiz = async (req, res) => {
       3. correct_answer (index of correct option)
       4. explanation
     `;
-    
+
     // Use the more capable model for structured output
     const result = await complexModel.generateContent(quizPrompt);
     const response = await result.response;
     const generatedText = response.text();
-    
+
     // Extract JSON from response
-    const jsonMatch = generatedText.match(/```json\n([\s\S]*?)\n```/) || 
-                     generatedText.match(/\[\n\s*\{[\s\S]*\}\n\]/);
-    
+    const jsonMatch = generatedText.match(/```json\n([\s\S]*?)\n```/) ||
+      generatedText.match(/\[\n\s*\{[\s\S]*\}\n\]/);
+
     let quiz;
     if (jsonMatch && jsonMatch[1]) {
       try {
@@ -170,7 +170,7 @@ exports.generateQuiz = async (req, res) => {
     } else {
       quiz = { raw: generatedText };
     }
-    
+
     res.status(200).json({
       success: true,
       model: "gemini-1.5-pro",
@@ -200,7 +200,7 @@ exports.summarizeDocument = async (req, res) => {
           message: err
         });
       }
-      
+
       if (!req.file) {
         return res.status(400).json({
           success: false,
@@ -211,9 +211,9 @@ exports.summarizeDocument = async (req, res) => {
       // Get file path
       const filePath = req.file.path;
       const fileExt = path.extname(req.file.originalname).toLowerCase();
-      
+
       let text = '';
-      
+
       // Extract text based on file type
       try {
         if (fileExt === '.pdf') {
@@ -250,27 +250,27 @@ exports.summarizeDocument = async (req, res) => {
         } catch (e) {
           console.error('Failed to delete file after error:', e);
         }
-        
+
         return res.status(500).json({
           success: false,
           message: 'Error processing file',
           error: error.message
         });
       }
-      
+
       if (!text || text.length < 100) {
         // Clean up the file
         fs.unlinkSync(filePath);
-        
+
         return res.status(400).json({
           success: false,
           message: 'Not enough text content to summarize. The file may be empty or contain non-text content.'
         });
       }
-      
+
       // Get max length from request or use default
       const maxLength = req.body.maxLength || 300;
-      
+
       try {
         // Generate summary with the text model (faster)
         const summaryPrompt = `
@@ -278,14 +278,14 @@ exports.summarizeDocument = async (req, res) => {
           
           ${text.slice(0, 15000)} // Limit to 15000 characters to avoid token limits
         `;
-        
+
         const result = await textModel.generateContent(summaryPrompt);
         const response = await result.response;
         const summary = response.text();
-        
+
         // Delete the file after processing
         fs.unlinkSync(filePath);
-        
+
         res.status(200).json({
           success: true,
           model: "gemini-1.5-flash",
@@ -302,7 +302,7 @@ exports.summarizeDocument = async (req, res) => {
         } catch (e) {
           console.error('Failed to delete file after AI error:', e);
         }
-        
+
         console.error('AI processing error:', error);
         res.status(500).json({
           success: false,
@@ -327,25 +327,25 @@ exports.summarizeDocument = async (req, res) => {
 exports.summarizeText = async (req, res) => {
   try {
     const { text, maxLength = 300 } = req.body;
-    
+
     if (!text || text.length < 100) {
       return res.status(400).json({
         success: false,
         message: 'Please provide text content with at least 100 characters'
       });
     }
-    
+
     // Generate summary with the text model (faster)
     const summaryPrompt = `
       Create a concise summary in approximately ${maxLength} words of this text:
       
       ${text.slice(0, 15000)}
     `;
-    
+
     const result = await textModel.generateContent(summaryPrompt);
     const response = await result.response;
     const summary = response.text();
-    
+
     res.status(200).json({
       success: true,
       model: "gemini-1.5-flash",
@@ -371,31 +371,31 @@ exports.summarizeText = async (req, res) => {
 exports.generateResponse = async (req, res) => {
   try {
     const { prompt, temperature = 0.7 } = req.body;
-    
+
     if (!prompt) {
       return res.status(400).json({
         success: false,
         message: 'Please provide a prompt'
       });
     }
-    
+
     // Configure generation parameters
     const generationConfig = {
       temperature: parseFloat(temperature),
       topK: 40,
       topP: 0.95,
     };
-    
+
     // Generate response with Gemini
-    const genModel = genAI.getGenerativeModel({ 
+    const genModel = genAI.getGenerativeModel({
       model: "gemini-1.5-flash", // Updated from gemini-pro
       generationConfig,
     });
-    
+
     const result = await genModel.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
-    
+
     res.status(200).json({
       success: true,
       data: {
@@ -421,12 +421,12 @@ exports.analyzeVisual = async (req, res) => {
     const imageUpload = multer({
       storage: storage,
       limits: { fileSize: 5000000 }, // 5MB limit
-      fileFilter: function(req, file, cb) {
+      fileFilter: function (req, file, cb) {
         // Check allowed image types
         const filetypes = /jpeg|jpg|png|gif/;
         const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
         const mimetype = filetypes.test(file.mimetype);
-        
+
         if (mimetype && extname) {
           return cb(null, true);
         } else {
@@ -434,7 +434,7 @@ exports.analyzeVisual = async (req, res) => {
         }
       }
     }).single('image');
-    
+
     imageUpload(req, res, async (err) => {
       if (err) {
         return res.status(400).json({
@@ -442,26 +442,26 @@ exports.analyzeVisual = async (req, res) => {
           message: err
         });
       }
-      
+
       if (!req.file) {
         return res.status(400).json({
           success: false,
           message: 'No image uploaded'
         });
       }
-      
+
       // Get file path
       const filePath = req.file.path;
       const fileExt = path.extname(req.file.originalname).toLowerCase();
       const prompt = req.body.prompt || 'Analyze this image in detail and describe what you see.';
-      
+
       // Since our tests showed vision-specific models aren't available,
       // we'll use a different approach by converting images to base64 and using complexModel
       try {
         // Read the image file
         const imageBuffer = fs.readFileSync(filePath);
         const base64Image = imageBuffer.toString('base64');
-        
+
         // Since vision models aren't available, we'll use a workaround:
         // We'll use text analysis on the image description
         const textAnalysis = `
@@ -477,10 +477,10 @@ exports.analyzeVisual = async (req, res) => {
           - File type: ${fileExt}
           - File size: ${(imageBuffer.length / 1024).toFixed(2)} KB
         `;
-        
+
         // Delete the file after processing
         fs.unlinkSync(filePath);
-        
+
         res.status(200).json({
           success: true,
           data: {
@@ -496,7 +496,7 @@ exports.analyzeVisual = async (req, res) => {
         } catch (e) {
           console.error('Failed to delete image after error:', e);
         }
-        
+
         console.error('Image processing error:', error);
         res.status(500).json({
           success: false,
@@ -530,10 +530,10 @@ exports.listAvailableModels = async (req, res) => {
       "gemini-pro",
       "gemini-pro-vision"
     ];
-    
+
     const results = {};
     let workingModel = null;
-    
+
     for (const modelName of modelNames) {
       try {
         console.log(`Testing model: ${modelName}`);
@@ -541,12 +541,12 @@ exports.listAvailableModels = async (req, res) => {
         const result = await testModel.generateContent("Test");
         const response = await result.response;
         const text = response.text();
-        
+
         results[modelName] = {
           status: "Available",
           sample: text.substring(0, 50) + (text.length > 50 ? "..." : "")
         };
-        
+
         // Save the first working model
         if (!workingModel) {
           workingModel = modelName;
@@ -558,7 +558,7 @@ exports.listAvailableModels = async (req, res) => {
         };
       }
     }
-    
+
     res.status(200).json({
       success: true,
       recommendedModel: workingModel,
@@ -584,7 +584,7 @@ exports.getApiInfo = async (req, res) => {
     // Try a simple call to get version info from response headers
     let apiVersionInfo = "Unknown";
     let apiEndpoint = "Unknown";
-    
+
     try {
       // Attempt to make a request and capture version info from any errors
       const testModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
@@ -597,19 +597,19 @@ exports.getApiInfo = async (req, res) => {
       if (versionMatch) {
         apiVersionInfo = versionMatch[1];
       }
-      
+
       const urlMatch = err.message.match(/https:\/\/[^:]+/);
       if (urlMatch) {
         apiEndpoint = urlMatch[0];
       }
     }
-    
+
     res.status(200).json({
       success: true,
       data: {
         library: "@google/generative-ai",
         apiKeyPresent: !!process.env.GEMINI_API_KEY,
-        apiKeyFirstChars: process.env.GEMINI_API_KEY ? 
+        apiKeyFirstChars: process.env.GEMINI_API_KEY ?
           `${process.env.GEMINI_API_KEY.substring(0, 3)}...` : "Not set",
         detectedApiVersion: apiVersionInfo,
         apiEndpoint: apiEndpoint,
@@ -635,21 +635,21 @@ exports.getModelStatus = async (req, res) => {
     // Test currently configured models
     let textModelStatus = "Unknown";
     let complexModelStatus = "Unknown";
-    
+
     try {
       const result = await textModel.generateContent("Test");
       textModelStatus = "Available";
     } catch (err) {
       textModelStatus = `Error: ${err.message}`;
     }
-    
+
     try {
       const result = await complexModel.generateContent("Test");
       complexModelStatus = "Available";
     } catch (err) {
       complexModelStatus = `Error: ${err.message}`;
     }
-    
+
     res.status(200).json({
       success: true,
       data: {
@@ -660,7 +660,7 @@ exports.getModelStatus = async (req, res) => {
             status: textModelStatus
           },
           "complexModel": {
-            name: "gemini-1.5-pro", 
+            name: "gemini-1.5-pro",
             status: complexModelStatus
           },
           "visionStatus": "Not available in current API configuration"
@@ -684,24 +684,24 @@ exports.getModelStatus = async (req, res) => {
 exports.quickChat = async (req, res) => {
   try {
     const { message, useComplexModel, history = [] } = req.body;
-    
+
     if (!message) {
       return res.status(400).json({
         success: false,
         message: 'Please provide a message'
       });
     }
-    
+
     // Select model
     const model = useComplexModel ? complexModel : textModel;
     const modelName = useComplexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
-    
+
     // Format history for Gemini API
     const chatHistory = history.map(msg => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
     }));
-    
+
     // Start chat
     const chat = model.startChat({
       history: chatHistory,
@@ -712,12 +712,12 @@ exports.quickChat = async (req, res) => {
         maxOutputTokens: 1024,
       }
     });
-    
+
     // Get response
     const result = await chat.sendMessage(message);
     const response = await result.response;
     const aiReply = response.text();
-    
+
     res.status(200).json({
       success: true,
       model: modelName,
@@ -745,70 +745,55 @@ exports.quickChat = async (req, res) => {
 // @access  Private
 exports.startConversation = async (req, res) => {
   try {
-    const { message, useComplexModel, conversationName } = req.body;
-    
-    if (!message) {
+    const { initialMessage, useComplexModel, title } = req.body;
+
+    if (!initialMessage) {
       return res.status(400).json({
         success: false,
         message: 'Please provide an initial message'
       });
     }
-    
+
     // Select model
     const model = useComplexModel ? complexModel : textModel;
     const modelName = useComplexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
-    
+
     console.log(`Starting conversation with model: ${modelName}`);
-    
+
     // Generate AI response
-    const result = await model.generateContent(message);
+    const result = await model.generateContent(initialMessage);
     const response = await result.response;
     const aiReply = response.text();
-    
-    // Generate conversation name if not provided
-    let suggestedName = conversationName;
-    if (!suggestedName) {
-      try {
-        // Ask the AI to generate a conversation name based on the first message
-        const namePrompt = `Based on this message, suggest a short, descriptive title (3-5 words) for this conversation: "${message}"`;
-        const nameResult = await textModel.generateContent(namePrompt);
-        const nameResponse = await nameResult.response;
-        suggestedName = nameResponse.text().trim().replace(/^["']|["']$/g, ''); // Remove quotes if present
-      } catch (err) {
-        console.error('Error generating conversation name:', err);
-        // Create a simple name based on the first few words
-        suggestedName = message.split(' ').slice(0, 4).join(' ');
-        if (message.length > suggestedName.length) suggestedName += '...';
-      }
-    }
-    
+
+    // Create suggested name
+    let suggestedName = title || `New Conversation`;
+
     // Create and save the conversation to database
     const newConversation = new Conversation({
       user: req.user.id,
       title: suggestedName,
       model: modelName,
       messages: [
-        { role: 'user', content: message, timestamp: new Date() },
-        { role: 'assistant', content: aiReply, timestamp: new Date() }
+        {
+          role: 'user',
+          content: initialMessage,  // Ensure this field is defined 
+          timestamp: new Date(),
+          read: true
+        },
+        {
+          role: 'assistant',
+          content: aiReply,  // Ensure this field is defined
+          timestamp: new Date(),
+          read: false
+        }
       ],
-      lastUpdated: new Date()
     });
-    
+
     await newConversation.save();
-    console.log('New conversation saved:', newConversation._id);
-    
+
     res.status(201).json({
       success: true,
-      data: {
-        conversation: {
-          id: newConversation._id,
-          title: newConversation.title,
-          messages: newConversation.messages,
-          createdAt: newConversation.createdAt,
-          lastUpdated: newConversation.lastUpdated,
-          model: newConversation.model
-        }
-      }
+      data: newConversation
     });
   } catch (error) {
     console.error('Error starting conversation:', error);
@@ -827,106 +812,109 @@ exports.continueAiConversation = async (req, res) => {
   try {
     const { conversationId } = req.params;
     const { message, useComplexModel } = req.body;
-    
+
     if (!message) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide a message'
-      });
+      return res.status(400).json({ success: false, message: 'Please provide a message' });
     }
-    
-    // Find the conversation by ID and user
-    const conversation = await Conversation.findOne({
-      _id: conversationId,
-      user: req.user.id
-    });
-    
+
+    const conversation = await Conversation.findOne({ _id: conversationId, user: req.user.id });
     if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Conversation not found or you do not have permission to access it'
-      });
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
+
+    // ALWAYS use the complex model for better reasoning
+    const modelName = 'gemini-1.5-pro';
+    const modelToUse = complexModel;
     
-    // Determine which model to use - either from the request, or use the one from the conversation
-    // Fix: Safely check the model field type and value
-    let modelToUse;
-    if (useComplexModel !== undefined) {
-      // Use what was requested in this call
-      modelToUse = useComplexModel ? complexModel : textModel;
+    console.log(`Using model: ${modelName} for conversation: ${conversationId}`);
+
+    // Get recent messages (up to 10 for context)
+    const recentMessages = conversation.messages.slice(-10);
+
+    // NEW APPROACH: Direct context injection without complicated analysis
+    // First, identify subjects using a much simpler approach
+    const simplifiedContext = getSimplifiedConversationContext(recentMessages, message);
+    
+    console.log("Conversation context:", JSON.stringify(simplifiedContext));
+    
+    // Build a more explicit prompt that focuses on clarity over complexity
+    let prompt = "";
+
+    // System Role and General Instructions
+    prompt += "You are GemSpace AI, a helpful assistant for students and educators. Your primary goal is to provide accurate, relevant, and concise answers based on the conversation history and the user's current query.\n\n";
+
+    // Explicit Subject Reference (if user said "by they I mean X")
+    if (simplifiedContext.explicitSubjectReference) {
+      prompt += `CONTEXTUAL NOTE: The user has explicitly stated that when they use pronouns like "they" or "them", they are referring to "${simplifiedContext.explicitSubjectReference}". You MUST use this information.\n\n`;
+    }
+
+    // Conversation History
+    prompt += "CONVERSATION HISTORY (Oldest to Newest):\n";
+    const historyLimit = Math.min(recentMessages.length, 5); // Show last 5 messages for brevity
+    for (let i = Math.max(0, recentMessages.length - historyLimit); i < recentMessages.length; i++) {
+      const msg = recentMessages[i];
+      const speaker = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+      prompt += `${speaker}: ${msg.content}\n`; // FIX: Corrected closing backtick
+    }
+    prompt += "\n";
+
+    // Current User Message
+    prompt += `CURRENT USER MESSAGE:\nUSER: ${message}\n\n`;
+
+    // --- CRITICAL PRONOUN RESOLUTION AND RESPONSE INSTRUCTIONS ---
+    prompt += "INSTRUCTIONS FOR YOUR RESPONSE:\n";
+
+    if (simplifiedContext.hasPronouns && simplifiedContext.mainSubject) {
+      prompt += `1. The user's current message contains pronouns (e.g., "they", "them", "it").\n`;
+      prompt += `2. In this specific context, these pronouns DIRECTLY AND EXPLICITLY refer to: "${simplifiedContext.mainSubject}".\n`;
+      prompt += `3. Example: If the user asks "how do they influence the world", and the main subject is "${simplifiedContext.mainSubject}", you MUST interpret this as "how do ${simplifiedContext.mainSubject} influence the world".\n`;
+      prompt += `4. CRITICAL: You MUST NOT ask for clarification about what "they" (or other pronouns) refer to. Assume they refer to "${simplifiedContext.mainSubject}".\n`;
+      prompt += `5. Answer the question directly as if the user had explicitly named "${simplifiedContext.mainSubject}".\n`;
     } else {
-      // Use what's stored in the conversation
-      // Safely check the model field which might be string or undefined
-      const modelName = typeof conversation.model === 'string' ? conversation.model : 'gemini-1.5-flash';
-      modelToUse = modelName.includes('pro') ? complexModel : textModel;
+      prompt += `1. Answer the user's question directly and comprehensively.\n`;
     }
-    
-    const modelName = modelToUse === complexModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
-    
-    // Ensure messages array exists
-    if (!Array.isArray(conversation.messages)) {
-      conversation.messages = [];
-    }
-    
-    // Format conversation history for Gemini API
-    const chatHistory = conversation.messages.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    }));
-    
-    // Start chat with existing history
-    const chat = modelToUse.startChat({
-      history: chatHistory,
-      generationConfig: {
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      }
-    });
-    
-    // Add user message to conversation
-    conversation.messages.push({
+
+    prompt += `6. Maintain a helpful and informative tone, consistent with an AI assistant for students and educators.\n`;
+    prompt += `7. Keep responses focused on the user's query.\n\n`;
+
+    prompt += "ASSISTANT RESPONSE:";
+
+    // Add user message to conversation history
+    const userMessage = {
       role: 'user',
       content: message,
-      timestamp: new Date()
-    });
-    
-    // Get response from AI
-    console.log(`Sending message to AI with model: ${modelName}`);
-    const result = await chat.sendMessage(message);
-    const response = await result.response;
+      messageType: 'text',
+      timestamp: new Date(),
+      readBy: []
+    };
+    conversation.messages.push(userMessage);
+
+    // NEW: Use a direct API call with simplified parameters
+    const result = await modelToUse.generateContent(prompt);
+    const response = result.response;
     const aiReply = response.text();
-    
-    // Add AI response to conversation
-    conversation.messages.push({
+
+    // Add the AI response to conversation
+    const aiMessage = {
       role: 'assistant',
       content: aiReply,
-      timestamp: new Date()
-    });
-    
-    // Update conversation metadata
-    conversation.lastUpdated = new Date();
-    conversation.model = modelName; // Update the model if it changed
-    
-    // Save the updated conversation
+      messageType: 'text',
+      timestamp: new Date(),
+      readBy: []
+    };
+    conversation.messages.push(aiMessage);
+
+    // Update metadata and save
+    conversation.updatedAt = new Date();
+    conversation.lastActivity = new Date();
     await conversation.save();
-    
+
     res.status(200).json({
       success: true,
-      data: {
-        conversation: {
-          id: conversation._id,
-          title: conversation.title,
-          messages: conversation.messages,
-          lastUpdated: conversation.lastUpdated,
-          model: modelName
-        },
-        latestMessage: aiReply
-      }
+      data: conversation
     });
   } catch (error) {
-    console.error('Error continuing AI conversation:', error);
+    console.error('Error continuing conversation:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -934,6 +922,97 @@ exports.continueAiConversation = async (req, res) => {
     });
   }
 };
+
+// NEW: Get a simplified context that focuses on EXACTLY what we need
+function getSimplifiedConversationContext(messages, currentMessage) {
+  // Normalize common typos and archaic forms
+  const normalizedMessage = currentMessage
+    .replace(/\bthy\b/gi, 'they')
+    .replace(/\bthier\b/gi, 'their')
+    .replace(/\btehy\b/gi, 'they');
+
+  const context = {
+    mainSubject: null,
+    hasPronouns: /\b(they|them|their|it|its)\b/i.test(normalizedMessage),
+    explicitSubjectReference: null
+  };
+
+  // 1. Look for explicit subject in the current message
+  const explicitMatch = normalizedMessage.match(/by\s+(they|them|it)\s+(i|we)\s+mean\s+([a-z ]+)/i);
+  if (explicitMatch) {
+    context.explicitSubjectReference = explicitMatch[3].trim().toLowerCase();
+    context.mainSubject = context.explicitSubjectReference;
+    return context;
+  }
+
+  // 2. Walk backwards through messages to find the last user subject question
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === 'user') {
+      // Match "who are", "what is", etc.
+      const subjMatch = msg.content.match(/(?:who (?:is|are)|what (?:is|are)|tell me about|define|explain)\s+([a-z ]+)/i);
+      if (subjMatch) {
+        context.mainSubject = subjMatch[1].trim().toLowerCase();
+        break;
+      }
+      if (msg.content.toLowerCase().includes('computer scientist')) {
+        context.mainSubject = 'computer scientists';
+        break;
+      }
+      if (msg.content.toLowerCase().includes('engineer')) {
+        context.mainSubject = 'engineers';
+        break;
+      }
+    }
+  }
+
+  return context;
+}
+
+// NEW: Construct a clear prompt that focuses on explicit instructions
+function constructClearPrompt(messages, currentMessage, context) {
+  let prompt = "";
+
+  // System Role and General Instructions
+  prompt += "You are GemSpace AI, a helpful assistant for students and educators. Your primary goal is to provide accurate, relevant, and concise answers based on the conversation history and the user's current query.\n\n";
+
+  // Explicit Subject Reference (if user said "by they I mean X")
+  if (context.explicitSubjectReference) {
+    prompt += `CONTEXTUAL NOTE: The user has explicitly stated that when they use pronouns like "they" or "them", they are referring to "${context.explicitSubjectReference}". You MUST use this information.\n\n`;
+  }
+
+  // Conversation History
+  prompt += "CONVERSATION HISTORY (Oldest to Newest):\n";
+  const historyLimit = Math.min(messages.length, 5); // Show last 5 messages for brevity
+  for (let i = Math.max(0, messages.length - historyLimit); i < messages.length; i++) {
+    const msg = messages[i];
+    const speaker = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+    prompt += `${speaker}: ${msg.content}\n`; // FIX: Corrected closing backtick
+  }
+  prompt += "\n";
+
+  // Current User Message
+  prompt += `CURRENT USER MESSAGE:\nUSER: ${currentMessage}\n\n`;
+
+  // --- CRITICAL PRONOUN RESOLUTION AND RESPONSE INSTRUCTIONS ---
+  prompt += "INSTRUCTIONS FOR YOUR RESPONSE:\n";
+
+  if (context.hasPronouns && context.mainSubject) {
+    prompt += `1. The user's current message contains pronouns (e.g., "they", "them", "it").\n`;
+    prompt += `2. In this specific context, these pronouns DIRECTLY AND EXPLICITLY refer to: "${context.mainSubject}".\n`;
+    prompt += `3. Example: If the user asks "how do they influence the world", and the main subject is "${context.mainSubject}", you MUST interpret this as "how do ${context.mainSubject} influence the world".\n`;
+    prompt += `4. CRITICAL: You MUST NOT ask for clarification about what "they" (or other pronouns) refer to. Assume they refer to "${context.mainSubject}".\n`;
+    prompt += `5. Answer the question directly as if the user had explicitly named "${context.mainSubject}".\n`;
+  } else {
+    prompt += `1. Answer the user's question directly and comprehensively.\n`;
+  }
+
+  prompt += `6. Maintain a helpful and informative tone, consistent with an AI assistant for students and educators.\n`;
+  prompt += `7. Keep responses focused on the user's query.\n\n`;
+
+  prompt += "ASSISTANT RESPONSE:";
+  return prompt;
+}
 
 // @desc    Get all conversations for the current user
 // @route   GET /api/ai/conversations
@@ -944,7 +1023,7 @@ exports.getConversations = async (req, res) => {
     const conversations = await Conversation.find({ user: req.user.id })
       .sort('-lastUpdated')
       .select('_id title lastUpdated model');
-    
+
     res.status(200).json({
       success: true,
       count: conversations.length,
@@ -971,20 +1050,20 @@ exports.getConversations = async (req, res) => {
 exports.getConversation = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    
+
     // Find the conversation by ID and user
     const conversation = await Conversation.findOne({
       _id: conversationId,
       user: req.user.id
     });
-    
+
     if (!conversation) {
       return res.status(404).json({
         success: false,
         message: 'Conversation not found or you do not have permission to access it'
       });
     }
-    
+
     res.status(200).json({
       success: true,
       data: {
@@ -1009,90 +1088,195 @@ exports.getConversation = async (req, res) => {
 // @desc    Continue conversation
 // @route   POST /api/conversations/:conversationId/messages
 // @access  Private
-exports.continueConversation = async (req, res) => {
+exports.continueAiConversation = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const { message } = req.body;
-    
+    const { message, useComplexModel } = req.body;
+
     if (!message) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide a message'
-      });
+      return res.status(400).json({ success: false, message: 'Please provide a message' });
     }
-    
-    // Find conversation
-    const conversation = await Conversation.findById(conversationId);
-    
+
+    const conversation = await Conversation.findOne({ _id: conversationId, user: req.user.id });
     if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Conversation not found'
-      });
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
+
+    // IMPORTANT: Always use the complex model for better reasoning capabilities
+    const modelToUse = complexModel; // Force using Pro model for better context handling
+    const modelName = 'gemini-1.5-pro';
+    console.log(`Using model: ${modelName} for conversation: ${conversationId}`);
+
+    // Get recent messages (last 10)
+    const recentMessages = conversation.messages.slice(-10);
     
-    // Check if user is a participant in the conversation
-    const isParticipant = conversation.participants && 
-                        conversation.participants.some(p => p.toString() === req.user.id);
+    // ------ SIMPLIFIED SUBJECT TRACKING ------
+    // Extract the main subjects from the conversation
+    const subjects = extractConversationSubjects(recentMessages);
+    const mainSubject = subjects.length > 0 ? subjects[0] : null;
     
-    if (!isParticipant) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not authorized to participate in this conversation'
-      });
-    }
+    console.log(`Extracted subjects: ${JSON.stringify(subjects)}`);
+    console.log(`Main subject: ${mainSubject}`);
     
-    // Check if messages array exists, if not, initialize it
-    if (!Array.isArray(conversation.messages)) {
-      console.log('Initializing messages array for conversation:', conversationId);
-      conversation.messages = [];
-    }
+    // ------ CREATE A COMPREHENSIVE SINGLE PROMPT ------
+    let fullPrompt = "";
     
-    // Create new message
-    const newMessage = new Message({
-      conversation: conversationId,
-      sender: req.user.id,
-      text: message
+    // Add system instructions
+    fullPrompt += "You are GemSpace AI, a helpful assistant for students and educators. " +
+                 "Your responses should be informative, accurate, and tailored to the user's needs.\n\n";
+    
+    // ------ CREATE EXPLICIT CONVERSATION HISTORY ------
+    fullPrompt += "CONVERSATION HISTORY:\n\n";
+    
+    recentMessages.forEach((msg, index) => {
+      if (msg.role === 'user') {
+        fullPrompt += `USER: ${msg.content}\n\n`;
+      } else if (msg.role === 'assistant') {
+        fullPrompt += `ASSISTANT: ${msg.content}\n\n`;
+      }
     });
     
-    await newMessage.save();
+    // ------ ADD EXPLICIT SUBJECT TRACKING ------
+    fullPrompt += "CONVERSATION CONTEXT:\n";
     
-    // Update conversation's last message
-    conversation.lastMessage = {
-      sender: req.user.id,
-      text: message,
+    if (mainSubject) {
+      fullPrompt += `The conversation is primarily discussing ${mainSubject}.\n`;
+      fullPrompt += `Any pronouns like 'they', 'them', 'their', etc. should be understood to refer to ${mainSubject} unless obviously referring to something else.\n\n`;
+    }
+    
+    // ------ ADD CURRENT MESSAGE WITH EXPLICIT PRONOUN INSTRUCTIONS ------
+    fullPrompt += "CURRENT MESSAGE:\n";
+    fullPrompt += `USER: ${message}\n\n`;
+    
+    // Check if message contains pronouns
+    const hasPronouns = /\b(they|them|their|it|its)\b/i.test(message);
+    
+    if (hasPronouns && mainSubject) {
+      fullPrompt += `NOTE: In the user's message, the pronouns (they/them/their) are referring to ${mainSubject}.\n\n`;
+    }
+    
+    // ------ DIRECT INSTRUCTION FOR RESPONSE ------
+    fullPrompt += "YOUR RESPONSE:\n";
+    fullPrompt += "Remember to maintain conversation context. ";
+    
+    if (mainSubject) {
+      fullPrompt += `If the user asks about 'they' or 'them', assume they're referring to ${mainSubject} unless clearly indicated otherwise. `;
+    }
+    
+    fullPrompt += "Answer the question directly and provide relevant information.\n\n";
+    
+    // Add the user message to the conversation
+    const userMessage = {
+      role: 'user',
+      content: message,
+      messageType: 'text',
       timestamp: new Date(),
-      read: false
+      readBy: []
     };
+    conversation.messages.push(userMessage);
     
-    // Update conversation timestamp
+    // ------ GENERATE THE RESPONSE ------
+    console.log(`Sending prompt with length: ${fullPrompt.length} characters`);
+    console.log(`Context detected: ${mainSubject || "No specific subject"}`);
+    
+    // Generate AI response with improved context
+    const result = await modelToUse.generateContent({
+      contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 1024,
+      }
+    });
+    
+    const response = result.response;
+    let aiReply = response.text();
+    
+    // Remove prefixes if the AI included them
+    aiReply = aiReply.replace(/^ASSISTANT:\s*/i, '');
+    
+    // Add AI response to conversation
+    const aiMessage = {
+      role: 'assistant',
+      content: aiReply,
+      messageType: 'text',
+      timestamp: new Date(),
+      readBy: []
+    };
+    conversation.messages.push(aiMessage);
+    
+    // Update conversation metadata
     conversation.updatedAt = new Date();
-    
-    // Save conversation
+    conversation.lastActivity = new Date();
     await conversation.save();
     
-    // Format response
-    const formattedMessage = {
-      id: newMessage._id,
-      sender: req.user.id,
-      text: message,
-      timestamp: newMessage.createdAt,
-      read: false
-    };
-    
-    res.status(201).json({
-      success: true,
-      data: formattedMessage
-    });
+    res.status(200).json({ success: true, data: conversation });
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    console.error('Error continuing conversation:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
+
+// Simplified function to extract the main subjects from conversation
+function extractConversationSubjects(messages) {
+  const subjects = [];
+  const subjectKeywords = {
+    'mechatronics engineers': ['mechatronics engineer', 'mechatronics', 'mechatronic'],
+    'engineers': ['engineer', 'engineering', 'engineers'],
+    'computer scientists': ['computer scientist', 'computer science', 'computer scientists'],
+    'data scientists': ['data scientist', 'data science', 'data scientists'],
+    'developers': ['developer', 'developers', 'software developer'],
+    'programmers': ['programmer', 'programmers', 'coding'],
+  };
+
+  // 1. Check for explicit subject declaration (highest priority)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === 'user') {
+      const content = msg.content.toLowerCase();
+      const explicitMatch = content.match(/by (?:they|them|it) (?:i|we) mean\s+([a-z ]+)/i);
+      if (explicitMatch) {
+        const explicitSubject = explicitMatch[1].trim();
+        for (const [subject, keywords] of Object.entries(subjectKeywords)) {
+          if (keywords.some(kw => explicitSubject.includes(kw))) {
+            return [subject];
+          }
+        }
+        return [explicitSubject];
+      }
+    }
+  }
+
+  // 2. Walk backwards for the most recent subject question
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === 'user') {
+      // Match "who are", "what is", etc.
+      const subjMatch = msg.content.match(/(?:who (?:is|are)|what (?:is|are)|tell me about|define|explain)\s+([a-z ]+)/i);
+      if (subjMatch) {
+        const found = subjMatch[1].trim().toLowerCase();
+        // Try to map to a known subject
+        for (const [subject, keywords] of Object.entries(subjectKeywords)) {
+          if (keywords.some(kw => found.includes(kw))) {
+            return [subject];
+          }
+        }
+        return [found];
+      }
+      // Fallback: check for keywords
+      for (const [subject, keywords] of Object.entries(subjectKeywords)) {
+        if (keywords.some(kw => msg.content.toLowerCase().includes(kw))) {
+          if (!subjects.includes(subject)) {
+            subjects.unshift(subject);
+          }
+        }
+      }
+    }
+  }
+
+  return subjects;
+}
 
 // @desc    Delete a specific conversation
 // @route   DELETE /api/ai/conversations/:conversationId
@@ -1100,7 +1284,7 @@ exports.continueConversation = async (req, res) => {
 exports.deleteConversation = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    
+
     // Validate the conversation ID
     if (!conversationId) {
       return res.status(400).json({
@@ -1108,23 +1292,23 @@ exports.deleteConversation = async (req, res) => {
         message: 'Conversation ID is required'
       });
     }
-    
+
     // Find the conversation by ID and user
     const conversation = await Conversation.findOne({
       _id: conversationId,
       user: req.user.id
     });
-    
+
     if (!conversation) {
       return res.status(404).json({
         success: false,
         message: 'Conversation not found or you do not have permission to delete it'
       });
     }
-    
+
     // Delete the conversation
     await Conversation.findByIdAndDelete(conversationId);
-    
+
     res.status(200).json({
       success: true,
       message: 'Conversation deleted successfully',
@@ -1147,7 +1331,7 @@ exports.deleteAllConversations = async (req, res) => {
   try {
     // Find all conversations for the current user
     const result = await Conversation.deleteMany({ user: req.user.id });
-    
+
     res.status(200).json({
       success: true,
       message: 'All conversations deleted successfully',
@@ -1170,35 +1354,35 @@ exports.getConversationMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    
+
     // Find conversation
     const conversation = await Conversation.findById(conversationId);
-    
+
     if (!conversation) {
       return res.status(404).json({
         success: false,
         message: 'Conversation not found'
       });
     }
-    
+
     // Check if user is a participant in the conversation
     const isParticipant = conversation.participants.some(
       p => p.toString() === req.user.id
     );
-    
+
     if (!isParticipant) {
       console.log('User not authorized:', req.user.id);
       console.log('Conversation participants:', conversation.participants);
-      
+
       return res.status(403).json({
         success: false,
         message: 'You are not authorized to access this conversation'
       });
     }
-    
+
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+
     // Get messages with pagination (newest first)
     const messages = await Message.find({
       conversation: conversationId
@@ -1207,46 +1391,46 @@ exports.getConversationMessages = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
-    
+
     // Automatically mark unread messages as read if sent by other user
     const unreadMessagesIds = messages
       .filter(msg => !msg.read && msg.sender._id.toString() !== req.user.id)
       .map(msg => msg._id);
-    
+
     if (unreadMessagesIds.length > 0) {
       await Message.updateMany(
         { _id: { $in: unreadMessagesIds } },
-        { 
+        {
           read: true,
           readAt: Date.now()
         }
       );
-      
+
       // If the last message was unread, update conversation's lastMessage.read status
-      if (conversation.lastMessage && 
-          conversation.lastMessage.sender && 
-          conversation.lastMessage.sender.toString() !== req.user.id && 
-          conversation.lastMessage.read === false) {
+      if (conversation.lastMessage &&
+        conversation.lastMessage.sender &&
+        conversation.lastMessage.sender.toString() !== req.user.id &&
+        conversation.lastMessage.read === false) {
         conversation.lastMessage.read = true;
         await conversation.save();
       }
     }
-    
+
     // Get total count for pagination
     const total = await Message.countDocuments({ conversation: conversationId });
-    
+
     // Get the other participant
     const otherParticipantId = conversation.participants.find(
       p => p.toString() !== req.user.id
     );
-    
+
     // Get other participant's details if available
     let otherUser = null;
     if (otherParticipantId) {
       otherUser = await User.findById(otherParticipantId)
         .select('fullName email profileImage avatar');
     }
-    
+
     res.status(200).json({
       success: true,
       count: messages.length,

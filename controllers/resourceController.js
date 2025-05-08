@@ -10,6 +10,40 @@ const { bucket } = require('../config/firebase');
 const externalResourceService = require('../services/externalResourceService');
 const SavedResource = require('../models/SavedResource');
 const ResourceDownload = require('../models/ResourceDownload');
+const mongoose = require('mongoose');
+
+
+
+
+exports.saveExternalResource = async (req, res) => {
+  try {
+    const { source, externalId, title, authors, description, thumbnail, infoLink } = req.body;
+    
+    // Create resource record in your database
+    const resource = await Resource.create({
+      title,
+      description,
+      authors,
+      thumbnail,
+      infoLink,
+      source,
+      externalId,
+      uploadedBy: req.user.id,
+      isExternal: true
+    });
+    
+    res.status(201).json({
+      success: true,
+      data: resource
+    });
+  } catch (error) {
+    console.error('Error saving external resource:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error saving external resource'
+    });
+  }
+};
 
 /**
  * @desc    Upload a resource (for lecturers)
@@ -343,8 +377,8 @@ exports.searchResources = async (req, res) => {
 };
 
 /**
- * @desc    Download a resource
- * @route   GET /api/resources/library/:id/download
+ * @desc    Download a resource (works for both internal and external resources)
+ * @route   GET /api/resources/:id/download
  * @access  Private/Student,Lecturer
  */
 exports.downloadResource = async (req, res) => {
@@ -359,58 +393,117 @@ exports.downloadResource = async (req, res) => {
 
     const { id } = req.params;
     
-    const resource = await Resource.findByIdAndUpdate(
-      id,
-      { $inc: { downloads: 1 } }
-    );
+    // First, check if this is a MongoDB ObjectId
+    const isValidObjectId = mongoose.Types.ObjectId.isValid(id);
     
-    if (!resource) {
-      return res.status(404).json({
-        success: false,
-        message: 'Resource not found'
-      });
-    }
-    
-    // Only allow downloading approved resources unless it's the uploader
-    if (!resource.isApproved && resource.uploadedBy.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'This resource is pending approval and cannot be downloaded yet'
-      });
-    }
-    
-    // Handle Firebase vs local storage
-    if (resource.fileUrl.includes('storage.googleapis.com') && bucket && bucket.file) {
-      // Generate signed URL for Firebase Storage
-      try {
-        const [url] = await bucket.file(resource.fileName).getSignedUrl({
-          action: 'read',
-          expires: Date.now() + 15 * 60 * 1000 // 15 minutes
-        });
-        
-        return res.status(200).json({
-          success: true,
-          url
-        });
-      } catch (error) {
-        console.error('Error generating signed URL:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Error generating download URL'
-        });
-      }
-    } else {
-      // Local storage - direct download
-      const filePath = path.join(__dirname, '..', resource.fileUrl);
+    if (isValidObjectId) {
+      // Handle internal resource download
+      const resource = await Resource.findByIdAndUpdate(
+        id,
+        { $inc: { downloads: 1 } }
+      );
       
-      if (!fs.existsSync(filePath)) {
+      if (!resource) {
         return res.status(404).json({
           success: false,
-          message: 'File not found on server'
+          message: 'Resource not found'
         });
       }
       
-      res.download(filePath, resource.fileName);
+      // Only allow downloading approved resources unless it's the uploader
+      if (!resource.isApproved && resource.uploadedBy.toString() !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'This resource is pending approval and cannot be downloaded yet'
+        });
+      }
+      
+      // Track the download
+      await ResourceDownload.create({
+        user: req.user.id,
+        resource: id,
+        downloadDate: Date.now()
+      });
+      
+      // Handle Firebase vs local storage
+      if (resource.fileUrl.includes('storage.googleapis.com') && bucket && bucket.file) {
+        // Generate signed URL for Firebase Storage
+        try {
+          const [url] = await bucket.file(resource.fileName).getSignedUrl({
+            action: 'read',
+            expires: Date.now() + 15 * 60 * 1000 // 15 minutes
+          });
+          
+          return res.status(200).json({
+            success: true,
+            url
+          });
+        } catch (error) {
+          console.error('Error generating signed URL:', error);
+          return res.status(500).json({
+            success: false,
+            message: 'Error generating download URL'
+          });
+        }
+      } else {
+        // Local storage - direct download
+        const filePath = path.join(__dirname, '..', resource.fileUrl);
+        
+        if (!fs.existsSync(filePath)) {
+          return res.status(404).json({
+            success: false,
+            message: 'File not found on server'
+          });
+        }
+        
+        return res.download(filePath, resource.fileName);
+      }
+    } else {
+      // Handle external resource download (by externalId)
+      
+      // First check if we have this external resource saved
+      const savedResource = await Resource.findOne({
+        externalId: id,
+        isExternal: true
+      });
+      
+      // If we have it saved, increment download count
+      if (savedResource) {
+        await Resource.findByIdAndUpdate(
+          savedResource._id,
+          { $inc: { downloads: 1 } }
+        );
+        
+        // Track the download
+        await ResourceDownload.create({
+          user: req.user.id,
+          resource: savedResource._id,
+          downloadDate: Date.now()
+        });
+      }
+      
+      // For Google Books, redirect to Google Books preview
+      if (id.match(/^[-A-Za-z0-9_]+$/)) {
+        return res.status(200).json({
+          success: true,
+          message: 'External resource',
+          url: `https://books.google.com/books?id=${id}&lpg=PP1&pg=PP1#v=onepage&q&f=false`
+        });
+      } 
+      // For Open Library resources
+      else if (id.startsWith('/works/')) {
+        return res.status(200).json({
+          success: true,
+          message: 'External resource',
+          url: `https://openlibrary.org${id}`
+        });
+      }
+      else {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid resource ID format'
+        });
+      }
     }
   } catch (error) {
     console.error('Error downloading resource:', error);

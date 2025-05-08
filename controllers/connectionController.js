@@ -1299,5 +1299,6 @@ async function migrateConnectionsToConversations() {
     console.log('Migration complete!');
   } catch (error) {
     console.error('Error in migration:', error);
+ 
   }
 }

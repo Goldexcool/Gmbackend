@@ -6,6 +6,12 @@ const cors = require('cors');
 const http = require('http');
 const socketIo = require('socket.io');
 
+// At the top of your main server file
+global.fetch = require('node-fetch');
+global.Headers = require('node-fetch').Headers;
+global.Request = require('node-fetch').Request;
+global.Response = require('node-fetch').Response;
+
 // Add this at the top of your server.js
 mongoose.set('strictQuery', false);
 

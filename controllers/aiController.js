@@ -150,10 +150,61 @@ exports.generateQuiz = async (req, res) => {
       4. explanation
     `;
 
-    // Use the more capable model for structured output
-    const result = await complexModel.generateContent(quizPrompt);
-    const response = await result.response;
-    const generatedText = response.text();
+    let result, response, generatedText, modelUsed;
+    
+    // Try with complex model first (Gemini 1.5 Pro)
+    try {
+      result = await complexModel.generateContent(quizPrompt);
+      response = result.response;
+      generatedText = response.text();
+      modelUsed = "gemini-1.5-pro";
+      console.log("Successfully used gemini-1.5-pro for quiz generation");
+    } catch (proError) {
+      // If we hit rate limits, try with the textModel (Gemini 1.5 Flash)
+      if (proError.message.includes("429") || proError.message.includes("quota")) {
+        console.log("Rate limited on Pro model, falling back to Flash model...");
+        try {
+          result = await textModel.generateContent(quizPrompt);
+          response = result.response;
+          generatedText = response.text();
+          modelUsed = "gemini-1.5-flash";
+          console.log("Successfully used gemini-1.5-flash as fallback");
+        } catch (flashError) {
+          // If both models fail, try a simpler prompt
+          if (flashError.message.includes("429") || flashError.message.includes("quota")) {
+            console.log("Rate limited on both models, using simplified prompt...");
+            
+            // Simplified prompt with fewer questions
+            const simplifiedPrompt = `
+              Create a ${difficulty} difficulty quiz with 3 questions about:
+              ${content.substring(0, 1000)}
+              
+              Format as JSON with: question_text, options (array), correct_answer (index), and explanation.
+            `;
+            
+            try {
+              result = await textModel.generateContent(simplifiedPrompt);
+              response = result.response;
+              generatedText = response.text();
+              modelUsed = "gemini-1.5-flash (simplified)";
+            } catch (finalError) {
+              // If all attempts fail, return a custom error with retry info
+              const waitTime = extractRetryDelay(finalError.message) || "60 seconds";
+              return res.status(429).json({
+                success: false,
+                message: "API rate limit exceeded",
+                error: `Please try again in ${waitTime}`,
+                retryAfter: waitTime
+              });
+            }
+          } else {
+            throw flashError; // Re-throw if it's not a rate limit error
+          }
+        }
+      } else {
+        throw proError; // Re-throw if it's not a rate limit error
+      }
+    }
 
     // Extract JSON from response
     const jsonMatch = generatedText.match(/```json\n([\s\S]*?)\n```/) ||
@@ -165,21 +216,38 @@ exports.generateQuiz = async (req, res) => {
         quiz = JSON.parse(jsonMatch[1]);
       } catch (e) {
         console.error('Failed to parse quiz JSON', e);
-        quiz = { raw: generatedText };
+        // Try to parse the entire text if the regex match failed
+        try {
+          const possibleJson = generatedText.match(/\[\s*\{[\s\S]*\}\s*\]/);
+          if (possibleJson) {
+            quiz = JSON.parse(possibleJson[0]);
+          } else {
+            quiz = { raw: generatedText };
+          }
+        } catch (e2) {
+          quiz = { raw: generatedText };
+        }
       }
     } else {
-      quiz = { raw: generatedText };
+      // Try direct parsing if regex matching fails
+      try {
+        quiz = JSON.parse(generatedText);
+      } catch (e) {
+        quiz = { raw: generatedText };
+      }
     }
 
     res.status(200).json({
       success: true,
-      model: "gemini-1.5-pro",
+      model: modelUsed,
       data: {
-        quiz
+        quiz,
+        noteAboutModel: modelUsed !== "gemini-1.5-pro" ? 
+          "Used fallback model due to rate limits on Pro model" : undefined
       }
     });
   } catch (error) {
-    console.error(error);
+    console.error("Quiz generation error:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -187,6 +255,15 @@ exports.generateQuiz = async (req, res) => {
     });
   }
 };
+
+// Helper function to extract retry delay from error message
+function extractRetryDelay(errorMessage) {
+  const match = errorMessage.match(/retryDelay\":\"(\d+)s\"/);
+  if (match && match[1]) {
+    return `${match[1]} seconds`;
+  }
+  return null;
+}
 
 // @desc    Summarize document content
 // @route   POST /api/ai/summarize

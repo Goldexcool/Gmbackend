@@ -37,7 +37,6 @@ const storage = multer.diskStorage({
   }
 });
 
-// Initialize upload with proper configuration for documents
 const upload = multer({
   storage: storage,
   limits: { fileSize: 10000000 }, // 10MB limit
@@ -57,7 +56,6 @@ const upload = multer({
   }
 }).single('file');
 
-// Extract text from PDF
 async function extractTextFromPDF(filePath) {
   if (!pdfParse) {
     throw new Error('PDF processing is not available. Please install pdf-parse package.');
@@ -73,7 +71,6 @@ async function extractTextFromPDF(filePath) {
   }
 }
 
-// Extract text from DOCX
 async function extractTextFromDOCX(filePath) {
   if (!mammoth) {
     throw new Error('DOCX processing is not available. Please install mammoth package.');
@@ -88,9 +85,6 @@ async function extractTextFromDOCX(filePath) {
   }
 }
 
-// @desc    Generate text based on prompt
-// @route   POST /api/ai/generate-text
-// @access  Private
 exports.generateText = async (req, res) => {
   try {
     const { prompt, maxTokens = 800 } = req.body;
@@ -102,7 +96,6 @@ exports.generateText = async (req, res) => {
       });
     }
 
-    // Use the faster model for simple text generation
     const result = await textModel.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
@@ -124,9 +117,6 @@ exports.generateText = async (req, res) => {
   }
 };
 
-// @desc    Generate quiz based on content (complex task - use pro model)
-// @route   POST /api/ai/generate-quiz
-// @access  Private
 exports.generateQuiz = async (req, res) => {
   try {
     const { content, numQuestions = 5, difficulty = 'medium' } = req.body;

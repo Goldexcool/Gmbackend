@@ -383,7 +383,10 @@ exports.acceptConnectionRequest = async (req, res) => {
     // Create a conversation for the connection
     const conversation = await Conversation.create([{
       participants: [connection.requester, connection.recipient],
-      isActive: true
+      isActive: true,
+      title: `Conversation between users`,
+      user: connection.requester,
+      conversationType: 'peer'
     }], { session });
 
     // Link conversation to connection
